@@ -153,11 +153,11 @@ fn handle_fasta(
     handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
         (sequence.len()-1-k as usize) as u32,
         &sequence, 
-        n_hashes, bloom, hash_table, k, hashed_minimizer);
+        n_hashes, bloom, hash_table, k, nb_blocks as u64);
 }
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
-    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, hashed_minimizer: u64) {
+    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, nb_blocks: u64) {
     for j in (start_pos as usize)..(end_pos as usize) {
     //for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
@@ -178,7 +178,10 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
             //println!("well it passed at least once");
         }
 
-        let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
+        //la je fais un hash qui doit pas dépendre des gens devant et derrière (hopefully) pour
+        //montrer que effectivement c plus lent comme ca
+        let already_in = bloom.check_and_insert(kmer_s_hashes[0]as u64%1024, //c propre ^^
+            kmer_s_hashes);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
         if already_in {
