@@ -9,7 +9,7 @@ mod utils;
 mod counter;
 mod output;
 
-use input::{read_fof};
+use input::{read_fof, read_fasta, read_lines};
 use minimizers::minimizers_x_positions;
 use bloom::{BloomFilter, BLOCK_SIZE};
 use counter::{CountTable};
@@ -22,12 +22,11 @@ use futures_util::pin_mut;
 use futures_util::StreamExt;
 use std::env; //for backtrace
 
-#[tokio::main]
-async fn main() {
+fn main() {
     //for debug
-    unsafe {
-        env::set_var("RUST_BACKTRACE", "1");
-    }
+    //unsafe {
+    //    env::set_var("RUST_BACKTRACE", "1");
+    //}
     //read arguments
     //TODO take arguments instead of having constants over here
     let k: u16 = 31;
@@ -36,8 +35,8 @@ async fn main() {
     //let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
     //let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
     //let filename = read_arguments
-    let size: usize = 1<<32; // 34 359 738 368bits so 4 294 967 296bytes
-    let nb_blocks: usize = 1<<11; //16 384 for now, will see later to make it varaible
+    let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
+    let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
 
     //for now check of size awith the blocks, later only two of them will be specified
     assert!(size == BLOCK_SIZE*nb_blocks, "Error on filter and block sizes, do not match.");
@@ -51,16 +50,50 @@ async fn main() {
     //ca c'était pour lire un seul fasta
     //let sequence = read_fasta(filename.to_string());
 
-    let iter_files = read_fof(filename.to_string());
-    pin_mut!(iter_files); //needed for iteration
+    //let iter_files = read_fof(filename.to_string());
+    //pin_mut!(iter_files); //needed for iteration
 
     let mut fasta_counter: usize = 0;
-    while let Some(sequence) = iter_files.next().await {
-        //handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
-        handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
-        println!("done with fasta {fasta_counter}");
-        fasta_counter+=1;
+    //while let Some(sequence) = iter_files.next().await {
+    //    //handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+    //    handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
+    //    println!("done with fasta {fasta_counter}");
+    //    fasta_counter+=1;
+    //}
+
+    //la je fais un truc qui prend l'input d'ici pour plus avoir de async a la con dans ma foncion
+    //
+    //
+    //
+    //
+    if let Ok(lines) = read_lines("fasta_reads/listing.txt") {
+        for line in lines {
+            let unwrapped_line = line.expect("Problem reading fof");
+            let sequence: PackedSeqVec = read_fasta(unwrapped_line);
+            handle_fasta(
+                    &mut bloom,
+                    &mut hash_table,
+                    sequence,
+                    k,
+                    m,
+                    n_hashes,
+                    nb_blocks,
+                );
+                println!("done with fasta {fasta_counter}");
+                fasta_counter+=1;
+        }
+    } else {
+        //sinon on renvoie le truc le plus lame possible, meme pas panic direct
+        panic!("Des bigs problèmes sur le main de lecture de fof");
     }
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
 
 
     //maintenant on s'occupe de la sortie et tout la
@@ -117,8 +150,10 @@ fn handle_fasta(
         //removing it doesn't break anything later
         let hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
-        handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-            n_hashes, bloom, hash_table, k, hashed_minimizer);
+        for _ in 0..10 {
+            handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
+                n_hashes, bloom, hash_table, k, hashed_minimizer);
+        }
         //handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
         //    n_hashes, &mut bloom, &mut hash_table, k, hashed_minimizer);
         //
@@ -181,11 +216,5 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
-        if already_in {
-            let kmer_hash: u32 = bloom.hashers[0].hash_kmers_simd(kmer, 1).collect()[0];
-            let bitvec_kmer: BitVec = convert_seqkmer(kmer);
-            hash_table.insert(bitvec_kmer, kmer_hash); //we take the first hash for the hash
-                                                            //table as well
-        }
     }
 }

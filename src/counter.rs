@@ -15,7 +15,7 @@ pub struct CountTable {
 
 impl CountTable {
     //const TABLE_SIZE: usize = 450000000; //450 millions
-    const TABLE_SIZE: usize = 45000000; //450 millions
+    const TABLE_SIZE: usize = 45; //450 millions
     const MAX_RETRIES: usize = 10;
     //constant that serves as "0" or "empty" with PackedSeq types
     
