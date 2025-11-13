@@ -213,7 +213,9 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
             //println!("well it passed at least once");
         }
 
-        let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
+        let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
+        let hhhashed_minimizer = (kmer_s_hashes[0] as u64)%(nb_blocks as u64);
+        let already_in = bloom.check_and_insert(hhhashed_minimizer, kmer_s_hashes);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
     }
