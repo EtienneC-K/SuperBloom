@@ -64,6 +64,8 @@ async fn main() {
 
 
     //maintenant on s'occupe de la sortie et tout la
+    //let bloom_trues: usize = bloom.check_true_bits();
+    //println!("number of true in my BF : {bloom_trues}");
     let final_count: Vec<u64> = hash_table.calculate_output();
     let _ = write_output(&final_count);
 
@@ -111,7 +113,6 @@ fn handle_fasta(
         let hashes: Vec <_> = bloom.hashers[i].hash_kmers_simd(sequence.as_slice(), 1).collect();
         hashed_kmers.push(hashes);
     }*/
-
     for i in 0..super_kmers_positions.len()-1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
@@ -149,7 +150,6 @@ fn handle_fasta(
     //pas oublier le dernier morceau de la liste a évaluer maintenant
     let hashed_minimizer = 
         xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
-    println!("Evidemmenet que c'est le dernier qui fait tout flopper");
     handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
         (sequence.len()-1-k as usize) as u32,
         &sequence, 
