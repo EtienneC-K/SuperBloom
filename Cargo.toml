@@ -16,3 +16,10 @@ packed-seq = "4.2.0"
 seq-hash = "0.1.1"
 simd-minimizers = "2.2.0"
 tokio = {version="0.2", features=["rt-threaded", "macros"]}
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

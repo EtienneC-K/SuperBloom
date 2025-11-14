@@ -19,7 +19,7 @@ pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
             let unwrapped_line = line.expect("Problem reading a FASTA");
             let line_bytes = unwrapped_line.as_bytes();
             //filter out all the comments
-            if line_bytes[0] != b'>' && line_bytes[1] != b';' {
+            if line_bytes[0] != b'>' && line_bytes[0] != b';' {
                 full_ascii += &unwrapped_line;
             }
         }
