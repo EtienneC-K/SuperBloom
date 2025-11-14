@@ -193,28 +193,16 @@ fn handle_fasta(
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
     bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, hashed_minimizer: u64) {
+
+    let mut kmer_s_hashes: Vec<u32> = Vec::new();
+    //we get all the kmers and their hashes
     for j in (start_pos as usize)..(end_pos as usize) {
-    //for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        //let kmer: PackedSeq = sequence.slice(j..j+k as usize+1);
-        let mut kmer_s_hashes: Vec<u32> = Vec::new();
-
-        //code for actually rolling the hashes
-        /*for k in 0..n_hashes {
-            kmer_s_hashes.push(hashed_kmers[k][j]);
-        }*/
         for i2 in 0..n_hashes {
-            //println!("hmmmmm");
-            //let bob = bloom.hashers.len();
-            //println!("{bob}");
-            //let bob2 = kmer.len();
-            //println!("{bob2}");
             kmer_s_hashes.push(bloom.hashers[i2].hash_kmers_simd(kmer, 1).collect()[0]);
-            //println!("well it passed at least once");
         }
-
-        let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
-        //do_smth if it was already in, like adding it to a hash_table for counting
-        //problem with that : its gonna take an awful lot of space i think (it does)
     }
+
+    //and then check and insert them all at once, no need to check for doublons
+    let _ = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
 }
