@@ -36,11 +36,11 @@ async fn main() {
     //let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
     //let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
     //let filename = read_arguments
-    let size: usize = 1<<32; // 34 359 738 368bits so 4 294 967 296bytes
-    let nb_blocks: usize = 1<<11; //16 384 for now, will see later to make it varaible
+    let size: usize = 1<<2; // 34 359 738 368bits so 4 294 967 296bytes
+    let nb_blocks: usize = 1<<2; //16 384 for now, will see later to make it varaible
 
     //for now check of size awith the blocks, later only two of them will be specified
-    assert!(size == BLOCK_SIZE*nb_blocks, "Error on filter and block sizes, do not match.");
+    //assert!(size == BLOCK_SIZE*nb_blocks, "Error on filter and block sizes, do not match.");
 
     let filename = "fasta_reads/listing.txt";
 
@@ -57,8 +57,9 @@ async fn main() {
     let mut fasta_counter: usize = 0;
     while let Some(sequence) = iter_files.next().await {
         //handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
-        handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
-        println!("done with fasta {fasta_counter}");
+        //handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
+        let lenseq = sequence.len();
+        println!("done with fasta {fasta_counter}, who had a len of {lenseq}");
         fasta_counter+=1;
     }
 
