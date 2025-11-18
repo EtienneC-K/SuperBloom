@@ -7,8 +7,6 @@ use bit_vec::BitVec;
 pub const BLOCK_SIZE: usize = 1<<21; //2 097 152
 
 pub struct BloomFilter {
-    //size: usize,
-    //n_hashes: usize,
     filter: BitVec,
     pub hashers: Vec<NtHasher>, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
 }

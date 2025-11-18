@@ -17,11 +17,8 @@ impl CountTable {
     //const TABLE_SIZE: usize = 450000000; //450 millions
     const TABLE_SIZE: usize = 5500000; //450 millions
     const MAX_RETRIES: usize = 10;
-    //constant that serves as "0" or "empty" with PackedSeq types
     
     pub fn new() -> Self {
-        //let zzero = PackedSeqVec::from_ascii("A".to_string().as_bytes());
-        //let table: Vec<PackedSeqVec> = vec![zzero.clone(); Self::TABLE_SIZE];
         let table: Vec<BitVec> = vec![bitvec![0; 64]; Self::TABLE_SIZE];
         let counters: Vec<u32> = vec![0; Self::TABLE_SIZE];
         let skip_counter: u64 = 0;
