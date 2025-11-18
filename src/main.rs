@@ -113,13 +113,20 @@ fn handle_fasta(
         let hashes: Vec <_> = bloom.hashers[i].hash_kmers_simd(sequence.as_slice(), 1).collect();
         hashed_kmers.push(hashes);
     }*/
+    let mut kmer_number: usize = 0;
+    //compute all hashes at once to g faster than computing them 1 by 1
+    let mut all_hashes: Vec<Vec<u32>> = Vec::new();
+    for i in 0..bloom.hashers.len() {
+        all_hashes.push(bloom.hashers[i].hash_kmers_simd(sequence.as_slice(), 1).collect());
+    }
     for i in 0..super_kmers_positions.len()-1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
         let hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
-        handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-            n_hashes, bloom, hash_table, k, hashed_minimizer);
+        kmer_number = 
+            handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
+            n_hashes, bloom, hash_table, k, hashed_minimizer, &all_hashes, kmer_number);
         //handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
         //    n_hashes, &mut bloom, &mut hash_table, k, hashed_minimizer);
         //
@@ -150,14 +157,17 @@ fn handle_fasta(
     //pas oublier le dernier morceau de la liste a évaluer maintenant
     let hashed_minimizer = 
         xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
-    handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
+    kmer_number = 
+        handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
         (sequence.len()-1-k as usize) as u32,
         &sequence, 
-        n_hashes, bloom, hash_table, k, hashed_minimizer);
+        n_hashes, bloom, hash_table, k, hashed_minimizer,
+        &all_hashes, kmer_number);
 }
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
-    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, hashed_minimizer: u64) {
+    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, hashed_minimizer: u64, 
+    all_hashes: &Vec<Vec<u32>>, mut kmer_number: usize) -> usize {
     for j in (start_pos as usize)..(end_pos as usize) {
     //for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
@@ -174,7 +184,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
             //println!("{bob}");
             //let bob2 = kmer.len();
             //println!("{bob2}");
-            kmer_s_hashes.push(bloom.hashers[i2].hash_kmers_simd(kmer, 1).collect()[0]);
+            //kmer_s_hashes.push(bloom.hashers[i2].hash_kmers_simd(kmer, 1).collect()[0]);
+            kmer_s_hashes.push(all_hashes[i2][kmer_number]);
             //println!("well it passed at least once");
         }
 
@@ -187,5 +198,7 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
             hash_table.insert(bitvec_kmer, kmer_hash); //we take the first hash for the hash
                                                             //table as well
         }
+        kmer_number+=1;
     }
+    kmer_number
 }
