@@ -48,17 +48,12 @@ async fn main() {
     let mut bloom = BloomFilter::new(size, n_hashes, k as usize);
     let mut hash_table = CountTable::new();
 
-    //ca c'était pour lire un seul fasta
-    //let sequence = read_fasta(filename.to_string());
-
     let iter_files = read_fof(filename.to_string());
     pin_mut!(iter_files); //needed for iteration
 
     let mut fasta_counter: usize = 0;
     while let Some(sequence) = iter_files.next().await {
-        //handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
         handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
-        println!("done with fasta {fasta_counter}");
         fasta_counter+=1;
     }
 
@@ -67,32 +62,17 @@ async fn main() {
     let final_count: Vec<u64> = hash_table.calculate_output();
     let _ = write_output(&final_count);
 
-    /*
-    for bob in len(l un de ceux au dessus la) {
-        let hash_minimizer = hash(minimizer_values[bob]) //en vrai pas besoin de hash c deja uniq
-        for kmer in supermer[bob].getkmers {
-            let deja_dedans = BBF[hash_minimizer].check_and_insert(kmer)
-            if deja_dednas {
-                grosse_hash_table_resultat.insert(kmer)
-            }
-        }
-    }
-    */
 }
 
 fn handle_fasta(
     bloom: &mut BloomFilter,
     hash_table: &mut CountTable,
-    //mut bloom: &BloomFilter,
-    //mut hash_table: &CountTable,
     sequence: PackedSeqVec,
     k: u16,
     m: u16,
     n_hashes: usize,
     nb_blocks: usize,
     ) {
-    //let (super_kmers_positions, minimizer_values): (Vec<u32>, Vec<u64>, PackedSeqVec)
-    //                                                = minimizers_x_positions(sequence, k, m);
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
                                                     = minimizers_x_positions(sequence, k, m);
 
@@ -105,77 +85,41 @@ fn handle_fasta(
 
     //hasher for the minimizers, will probably be removed later on
 
-    //code for actually rolling the hashes
-    /*let mut hashed_kmers: Vec<Vec<u32>> = Vec::new();
-    for i in 0..n_hashes {
-        let hashes: Vec <_> = bloom.hashers[i].hash_kmers_simd(sequence.as_slice(), 1).collect();
-        hashed_kmers.push(hashes);
-    }*/
-
+    let mut kmer_number: usize = 0;
+    //compute all hashes at once to g faster than computing them 1 by 1
+    let mut all_hashes: Vec<Vec<u32>> = Vec::new();
+    for i in 0..bloom.hashers.len() {
+        all_hashes.push(bloom.hashers[i].hash_kmers_simd(sequence.as_slice(), 1).collect());
+    }
     for i in 0..super_kmers_positions.len()-1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
         let hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
-        handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-            n_hashes, bloom, hash_table, k, hashed_minimizer);
-        //handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-        //    n_hashes, &mut bloom, &mut hash_table, k, hashed_minimizer);
-        //
-        //
-        //for j in (super_kmers_positions[i] as usize)..(super_kmers_positions[i+1] as usize) {
-        //    let kmer: PackedSeq = sequence.slice(j..j+k as usize+1);
-        //    let mut kmer_s_hashes: Vec<u32> = Vec::new();
-
-        //    //code for actually rolling the hashes
-        //    /*for k in 0..n_hashes {
-        //        kmer_s_hashes.push(hashed_kmers[k][j]);
-        //    }*/
-        //    for i2 in 0..n_hashes {
-        //        kmer_s_hashes.push(bloom.hashers[i2].hash_kmers_simd(kmer, 1).collect()[0]);
-        //    }
-
-        //    let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
-        //    //do_smth if it was already in, like adding it to a hash_table for counting
-        //    //problem with that : its gonna take an awful lot of space i think (it does)
-        //    if already_in {
-        //        let kmer_hash: u32 = bloom.hashers[0].hash_kmers_simd(kmer, 1).collect()[0];
-        //        let bitvec_kmer: BitVec = convert_seqkmer(kmer);
-        //        hash_table.insert(bitvec_kmer, kmer_hash); //we take the first hash for the hash
-        //                                                     //table as well
-        //    }
-        //}
+        kmer_number = 
+            handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
+            n_hashes, bloom, hash_table, k, hashed_minimizer, &all_hashes, kmer_number);
     }
     //pas oublier le dernier morceau de la liste a évaluer maintenant
     let hashed_minimizer = 
         xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
-    println!("Evidemmenet que c'est le dernier qui fait tout flopper");
-    handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
+    kmer_number = 
+        handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
         (sequence.len()-1-k as usize) as u32,
         &sequence, 
-        n_hashes, bloom, hash_table, k, nb_blocks as u64);
+        n_hashes, bloom, hash_table, k, hashed_minimizer,
+        &all_hashes, kmer_number);
 }
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
-    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, nb_blocks: u64) {
+    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, hashed_minimizer: u64, 
+    all_hashes: &Vec<Vec<u32>>, mut kmer_number: usize) -> usize {
     for j in (start_pos as usize)..(end_pos as usize) {
-    //for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        //let kmer: PackedSeq = sequence.slice(j..j+k as usize+1);
         let mut kmer_s_hashes: Vec<u32> = Vec::new();
 
-        //code for actually rolling the hashes
-        /*for k in 0..n_hashes {
-            kmer_s_hashes.push(hashed_kmers[k][j]);
-        }*/
         for i2 in 0..n_hashes {
-            //println!("hmmmmm");
-            //let bob = bloom.hashers.len();
-            //println!("{bob}");
-            //let bob2 = kmer.len();
-            //println!("{bob2}");
-            kmer_s_hashes.push(bloom.hashers[i2].hash_kmers_simd(kmer, 1).collect()[0]);
-            //println!("well it passed at least once");
+            kmer_s_hashes.push(all_hashes[i2][kmer_number]);
         }
 
         //la je fais un hash qui doit pas dépendre des gens devant et derrière (hopefully) pour
@@ -185,10 +129,12 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
         if already_in {
-            let kmer_hash: u32 = bloom.hashers[0].hash_kmers_simd(kmer, 1).collect()[0];
+            let kmer_hash = all_hashes[0][kmer_number];
             let bitvec_kmer: BitVec = convert_seqkmer(kmer);
             hash_table.insert(bitvec_kmer, kmer_hash); //we take the first hash for the hash
                                                             //table as well
         }
+        kmer_number+=1;
     }
+    kmer_number
 }

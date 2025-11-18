@@ -7,8 +7,6 @@ use bit_vec::BitVec;
 pub const BLOCK_SIZE: usize = 1<<21; //2 097 152
 
 pub struct BloomFilter {
-    //size: usize,
-    //n_hashes: usize,
     filter: BitVec,
     pub hashers: Vec<NtHasher>, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
 }
@@ -45,7 +43,18 @@ impl BloomFilter {
         }
         present
     }
+
+    pub fn check_true_bits(&self) -> usize {
+        let mut counter: usize = 0;
+        for i in 0..4294967296 {
+            if self.filter.get(i).unwrap() {
+                counter += 1;
+            }
+        }
+        counter
+    }
 }
+
 
 ///to get the NtHasher hasher's when creating the bloomfilter
 fn init_hashers(n_hashes : usize, seed: u32, k: usize) -> Vec<NtHasher> {

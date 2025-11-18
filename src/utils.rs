@@ -14,8 +14,6 @@ pub fn xorshift_u64(mut x: u64) -> u64 {
 ///converts the packedseq sequence to a BitVec for manipulation in the hash table
 ///table and such
 pub fn convert_seqkmer(sequence: PackedSeq) -> BitVec {
-    //sequence.as_slice().iter_bp().enumerate() //hopefully it works without slice
-    //let mut bit_seq = bitvec![0; 2*sequence.len()];
     let mut bit_seq = bitvec![0; 64]; //for now fixed size 64 for encoding of any kmer
     for (i, nuc) in sequence.iter_bp().enumerate() {
         if nuc == 1 {
