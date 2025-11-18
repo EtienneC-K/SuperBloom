@@ -58,7 +58,7 @@ async fn main() {
     while let Some(sequence) = iter_files.next().await {
         //handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
         handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
-        println!("done with fasta {fasta_counter}");
+        //println!("done with fasta {fasta_counter}");
         fasta_counter+=1;
     }
 
