@@ -37,7 +37,7 @@ impl CountTable {
         let mut i: usize = 0;
         while i<Self::MAX_RETRIES && !inserted {
             let current_address = ((hashed_kmer as usize) + (i+i.pow(2))/2) % Self::TABLE_SIZE;
-            let lalongeuru = self.table[0].len();
+            //let lalongeuru = self.table[0].len();
             if same_bitkmer(&self.table[current_address], &kmer) {
                 self.counters[current_address] = self.counters[current_address].saturating_add(1);
                 inserted = true;

@@ -7,8 +7,6 @@ use std::path::Path;
 //use std::str;
 use packed_seq::{PackedSeqVec, SeqVec};
 //use bitvec::prelude::*;
-use async_stream::stream;
-use futures_core::stream::Stream;
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
 pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
@@ -28,36 +26,19 @@ pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
     //packed_seq, to be used quickly later
     let packed_seq = PackedSeqVec::from_ascii(full_ascii.as_bytes());
 
-    //BitVec that i made, uses same encoding as imartayan but with a type that i know better
-    /*let mut bitvec_seq = bitvec![0; full_ascii.len()*2];
-    for (i, letter) in full_ascii.enumerate() {
-        if letter == "C" {
-            bitvec_seq[2*i+1] = 1;
-        } else if letter == "T" {
-            bitvec_seq[2*i] = 1;
-        } else if letter == "G" {
-            bitvec_seq[2*i+1] = 1;
-            bitvec_seq[2*i] = 1;
-        }
-    }
-    packed_seq, bitvec_seq*/
     packed_seq
 }
 
 ///function for reading a file of file to handle lots of fasta at once
 ///the fof should have the path to a single fasta on each line
-pub fn read_fof(fof_file: String) -> impl Stream<Item = PackedSeqVec> {
+pub fn read_fof(fof_file: String) -> Vec<String> {
+    let mut iter_files: Vec<String> = Vec::new();
     if let Ok(lines) = read_lines(fof_file) {
-        stream! {
-            for line in lines {
-                let unwrapped_line = line.expect("Problem reading fof");
-                yield(read_fasta(unwrapped_line));
-            }
+        for line in lines {
+            iter_files.push(line.unwrap());
         }
-    } else {
-        //sinon on renvoie le truc le plus lame possible
-        panic!("Des bigs problèmes sur la fonction de lecture de fof");
     }
+    iter_files
 }
 
 //function that reads a fasta file with multiple (really many) reads, usefull for having plenty of

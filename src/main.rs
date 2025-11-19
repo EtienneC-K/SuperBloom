@@ -9,21 +9,18 @@ mod utils;
 mod counter;
 mod output;
 
-use input::{read_fof};
+use input::{read_fof, read_fasta};
 use minimizers::minimizers_x_positions;
 use bloom::{BloomFilter, BLOCK_SIZE};
 use counter::{CountTable};
 use utils::{xorshift_u64, convert_seqkmer};
 use output::write_output;
 use seq_hash::{KmerHasher};
-use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
+use packed_seq::{PackedSeqVec, SeqVec, PackedSeq};
 use bitvec::prelude::*;
-use futures_util::pin_mut;
-use futures_util::StreamExt;
 use std::env; //for backtrace
 
-#[tokio::main]
-async fn main() {
+fn main() {
     //for debug
     unsafe {
         env::set_var("RUST_BACKTRACE", "1");
@@ -49,12 +46,11 @@ async fn main() {
     let mut hash_table = CountTable::new();
 
     let iter_files = read_fof(filename.to_string());
-    pin_mut!(iter_files); //needed for iteration
+    //pin_mut!(iter_files); //needed for iteration
 
-    let mut fasta_counter: usize = 0;
-    while let Some(sequence) = iter_files.next().await {
+    for fasta_name in iter_files {
+        let sequence = read_fasta(fasta_name);
         handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
-        fasta_counter+=1;
     }
 
 
@@ -103,7 +99,7 @@ fn handle_fasta(
     //pas oublier le dernier morceau de la liste a évaluer maintenant
     let hashed_minimizer = 
         xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
-    kmer_number = 
+    let _ = 
         handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
         (sequence.len()-1-k as usize) as u32,
         &sequence, 
