@@ -11,7 +11,7 @@ mod output;
 
 use input::{read_fof, read_fasta};
 use minimizers::minimizers_x_positions;
-use bloom::{BloomFilter, BLOCK_SIZE};
+use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use counter::{CountTable};
 use utils::{xorshift_u64};
 use output::write_output;
@@ -34,10 +34,10 @@ fn main() {
     //let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
     //let filename = read_arguments
     let size: usize = 1<<27; // 34 359 738 368bits so 4 294 967 296bytes
-    let nb_blocks: usize = 1<<15; //16 384 for now, will see later to make it varaible
+    //let nb_blocks: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
     //for now check of size awith the blocks, later only two of them will be specified
-    assert!(size == BLOCK_SIZE*nb_blocks, "Error on filter and block sizes, do not match.");
+    assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
 
     let filename = "fasta_reads/listing.txt";
 
@@ -50,7 +50,7 @@ fn main() {
 
     for fasta_name in iter_files {
         let sequence = read_fasta(fasta_name);
-        handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, nb_blocks);
+        handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
     }
 
 

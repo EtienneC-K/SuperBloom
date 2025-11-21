@@ -5,9 +5,10 @@ use bit_vec::BitVec;
 
 //size of blocks, for now constants to fit a rather small L2 cache for labtops used in 2025
 pub const BLOCK_SIZE: usize = 1<<12; //2 097 152
+pub const NB_BLOCKS: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
 pub struct BloomFilter {
-    filter: BitVec,
+    pub filter: Vec<BitVec>,
     pub hashers: Vec<NtHasher>, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
 }
 
@@ -16,7 +17,7 @@ impl BloomFilter {
         Self {
             //size,
             //n_hashes,
-            filter: BitVec::from_elem(size, false),
+            filter: vec![BitVec::from_elem(BLOCK_SIZE, false); size/BLOCK_SIZE],
             hashers: init_hashers(n_hashes, seed, k),
         }
     }
@@ -30,14 +31,14 @@ impl BloomFilter {
     ///inside the bloom filter, inserts it if needed
     pub fn check_and_insert(&mut self, hashed_minimizer: u64, kmer_s_hashes: Vec<u32>) -> bool {
         let mut present: bool = true;
+        let blocknum: usize = (hashed_minimizer as usize)%NB_BLOCKS;
         
         for hash in kmer_s_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
-            let address: usize = 
-                (hashed_minimizer as usize)*BLOCK_SIZE + (hash as usize%BLOCK_SIZE);
-            if !self.filter.get(address).unwrap_or(false) {
-                self.filter.set(address, true);
+            let address = hash as usize%BLOCK_SIZE;
+            if !self.filter[blocknum].get(address).unwrap_or(false) {
+                self.filter[blocknum].set(address, true);
                 present = false;
             }
         }

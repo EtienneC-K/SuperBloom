@@ -16,7 +16,7 @@ pub struct CountTable {
 
 impl CountTable {
     //const TABLE_SIZE: usize = 450000000; //450 millions
-    const TABLE_SIZE: usize = 5500000; //450 millions
+    const TABLE_SIZE: usize = 3200000; //3.2 millions
     const MAX_RETRIES: usize = 10;
     
     pub fn new() -> Self {
