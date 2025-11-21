@@ -4,7 +4,7 @@ use seq_hash::NtHasher;
 use bit_vec::BitVec;
 
 //size of blocks, for now constants to fit a rather small L2 cache for labtops used in 2025
-pub const BLOCK_SIZE: usize = 1<<21; //2 097 152
+pub const BLOCK_SIZE: usize = 1<<12; //2 097 152
 
 pub struct BloomFilter {
     filter: BitVec,
