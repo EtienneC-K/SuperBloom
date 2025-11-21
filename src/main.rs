@@ -13,10 +13,10 @@ use input::{read_fof, read_fasta};
 use minimizers::minimizers_x_positions;
 use bloom::{BloomFilter, BLOCK_SIZE};
 use counter::{CountTable};
-use utils::{xorshift_u64, convert_seqkmer};
+use utils::{xorshift_u64};
 use output::write_output;
 use seq_hash::{KmerHasher};
-use packed_seq::{PackedSeqVec, SeqVec, PackedSeq};
+use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use bitvec::prelude::*;
 use std::env; //for backtrace
 
@@ -123,9 +123,10 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         //problem with that : its gonna take an awful lot of space i think (it does)
         if already_in {
             let kmer_hash = all_hashes[0][kmer_number];
-            let bitvec_kmer: BitVec = convert_seqkmer(kmer);
-            hash_table.insert(bitvec_kmer, kmer_hash); //we take the first hash for the hash
+            //let bitvec_kmer: BitVec = convert_seqkmer(kmer);
+            hash_table.insert(kmer.as_u64(), kmer_hash); //we take the first hash for the hash
                                                             //table as well
+            println!("passed once yay");
         }
         kmer_number+=1;
     }

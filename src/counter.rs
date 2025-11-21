@@ -4,10 +4,11 @@
 //use std::ptr;
 use bitvec::prelude::*;
 //use packed_seq::packed_seq::PackedSeqBase;
+use packed_seq::{PackedSeq, PackedSeqVec, Seq, SeqVec};
 
 ///hash table taht will store all the kmers (but not yet their count)
 pub struct CountTable {
-    table: Vec<BitVec>, //ca store up to 31-mers bc of the chosen size
+    table: Vec<u64>, //ca store up to 31-mers bc of the chosen size
     counters: Vec<u32>,
     skip_counter: u64, //counts the amount of kmers that were not inserted
     //zzero: PackedSeqVec,
@@ -19,7 +20,7 @@ impl CountTable {
     const MAX_RETRIES: usize = 10;
     
     pub fn new() -> Self {
-        let table: Vec<BitVec> = vec![bitvec![0; 64]; Self::TABLE_SIZE];
+        let table: Vec<u64> = vec![u64::MAX; Self::TABLE_SIZE];
         let counters: Vec<u32> = vec![0; Self::TABLE_SIZE];
         let skip_counter: u64 = 0;
         Self {
@@ -32,20 +33,18 @@ impl CountTable {
     ///checks if the kmer is already inserted, or inserts it if its not, and then increments
     ///its counter, if after max_retries there is still no place that was found for the kmer
     ///we increment the skip_counter instead
-    pub fn insert(&mut self, kmer: BitVec, hashed_kmer: u32) {
+    pub fn insert(&mut self, kmer: u64, hashed_kmer: u32) {
         let mut inserted: bool = false;
         let mut i: usize = 0;
         while i<Self::MAX_RETRIES && !inserted {
             let current_address = ((hashed_kmer as usize) + (i+i.pow(2))/2) % Self::TABLE_SIZE;
-            //let lalongeuru = self.table[0].len();
-            if same_bitkmer(&self.table[current_address], &kmer) {
+            if self.table[current_address] == kmer {
                 self.counters[current_address] = self.counters[current_address].saturating_add(1);
                 inserted = true;
             }
             //we check the last bit that corresponds to insertion or not
-            else if self.table[current_address][63] == false {
-                self.table[current_address] = kmer.clone();
-                self.table[current_address].set(63, true);
+            else if self.table[current_address] == u64::MAX { //checking if unused
+                self.table[current_address] = kmer;
                 self.counters[current_address] = self.counters[current_address].saturating_add(1);
                 inserted = true;
             }
@@ -75,15 +74,4 @@ impl CountTable {
 
 
     //fonction qui sert pour réaliser "l'histogramme" de sorti
-}
-
-///checks if 2 bitvec representing kmers are identical, assumes k<=31 and they're written on at
-///least 62bits (and no more because k<31)
-pub fn same_bitkmer(kmer1: &BitSlice, kmer2: &BitSlice) -> bool {
-    for i in 0..61 {
-        if kmer1[i] != kmer2[i] {
-            return false;
-        }
-    }
-    true
 }
