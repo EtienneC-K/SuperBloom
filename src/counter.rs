@@ -77,6 +77,7 @@ impl CountTable {
                     final_count_vec[*count as usize].saturating_add(1);
             }
         }
+        final_count_vec.push(self.skip_counter);
         final_count_vec
     }
 
