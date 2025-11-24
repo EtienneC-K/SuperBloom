@@ -123,9 +123,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         //problem with that : its gonna take an awful lot of space i think (it does)
         if already_in {
             let kmer_hash = all_hashes[0][kmer_number];
-            //let bitvec_kmer: BitVec = convert_seqkmer(kmer);
-            hash_table.insert(kmer.as_u64(), kmer_hash); //we take the first hash for the hash
-                                                            //table as well
+            //taking the first hash for the hash table, doesnt seem to matter anyway
+            hash_table.insert(kmer.as_u64(), kmer_hash, hashed_minimizer);
         }
         kmer_number+=1;
     }
