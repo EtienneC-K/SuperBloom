@@ -2,22 +2,28 @@
 //use bitvec::BitVec;
 use seq_hash::NtHasher;
 use bit_vec::BitVec;
+use std::sync::Mutex;
 
 //size of blocks, for now constants to fit a rather small L2 cache for labtops used in 2025
 pub const BLOCK_SIZE: usize = 1<<12; //2 097 152
 pub const NB_BLOCKS: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
 pub struct BloomFilter {
-    pub filter: Vec<BitVec>,
+    pub filter: Vec<Mutex<BitVec>>,
     pub hashers: Vec<NtHasher>, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
 }
 
 impl BloomFilter {
     pub fn new_with_seed(size: usize, n_hashes: usize, seed: u32, k: usize) -> Self {
+        let mut filter: Vec<Mutex<BitVec>> = Vec::new();
+        for _ in 0..(size/BLOCK_SIZE) {
+            filter.push(Mutex::new(BitVec::from_elem(BLOCK_SIZE, false)));
+        }
         Self {
             //size,
             //n_hashes,
-            filter: vec![BitVec::from_elem(BLOCK_SIZE, false); size/BLOCK_SIZE],
+            //filter: vec![Mutex::new(BitVec::from_elem(BLOCK_SIZE, false)); size/BLOCK_SIZE],
+            filter: filter,
             hashers: init_hashers(n_hashes, seed, k),
         }
     }
@@ -29,16 +35,17 @@ impl BloomFilter {
 
     ///checks if the kmer with specified minimizer hash, and multiple hashes is
     ///inside the bloom filter, inserts it if needed
-    pub fn check_and_insert(&mut self, hashed_minimizer: u64, kmer_s_hashes: Vec<u32>) -> bool {
+    pub fn check_and_insert(&self, hashed_minimizer: u64, kmer_s_hashes: Vec<u32>) -> bool {
         let mut present: bool = true;
         let blocknum: usize = (hashed_minimizer as usize)%NB_BLOCKS;
+        let mut block = self.filter[blocknum].lock().unwrap();
         
         for hash in kmer_s_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%BLOCK_SIZE;
-            if !self.filter[blocknum].get(address).unwrap_or(false) {
-                self.filter[blocknum].set(address, true);
+            if !block.get(address).unwrap_or(false) {
+                block.set(address, true);
                 present = false;
             }
         }

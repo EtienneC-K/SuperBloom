@@ -5,10 +5,11 @@
 use bitvec::prelude::*;
 //use packed_seq::packed_seq::PackedSeqBase;
 use packed_seq::{PackedSeq, PackedSeqVec, Seq, SeqVec};
+use std::sync::Mutex;
 
 ///hash table taht will store all the kmers (but not yet their count)
 pub struct CountTable {
-    table: Vec<Vec<u64>>, //ca store up to 31-mers bc of the chosen size
+    table: Vec<Mutex<Vec<u64>>>, //ca store up to 31-mers bc of the chosen size
     counters: Vec<u32>,
     skip_counter: u64, //counts the amount of kmers that were not inserted
     //zzero: PackedSeqVec,
@@ -22,7 +23,11 @@ impl CountTable {
     const HT_NB_BLOCKS: usize = Self::TABLE_SIZE/Self::HT_BLOCK_SIZE;
     
     pub fn new() -> Self {
-        let table: Vec<Vec<u64>> = vec![vec![u64::MAX; Self::HT_BLOCK_SIZE]; Self::HT_NB_BLOCKS];
+        //let table: Vec<Mutex<Vec<u64>>> = vec![vec![u64::MAX; Self::HT_BLOCK_SIZE]; Self::HT_NB_BLOCKS];
+        let mut table: Vec<Mutex<Vec<u64>>> = Vec::new();
+        for _ in 0..Self::HT_NB_BLOCKS {
+            table.push(Mutex::new(vec![u64::MAX; Self::HT_BLOCK_SIZE]));
+        }
         let counters: Vec<u32> = vec![0; Self::TABLE_SIZE];
         let skip_counter: u64 = 0;
         assert_eq!(Self::HT_NB_BLOCKS, 1<<12);
@@ -36,23 +41,24 @@ impl CountTable {
     ///checks if the kmer is already inserted, or inserts it if its not, and then increments
     ///its counter, if after max_retries there is still no place that was found for the kmer
     ///we increment the skip_counter instead
-    pub fn insert(&mut self, kmer: u64, hashed_kmer: u32, hashed_minimizer: u64) {
+    pub fn insert(&self, kmer: u64, hashed_kmer: u32, hashed_minimizer: u64) {
         let mut inserted: bool = false;
         let mut i: usize = 0;
         let block_address = hashed_minimizer as usize % Self::HT_NB_BLOCKS;
+        let mut block = self.table[block_address].lock().unwrap();
         while i<Self::MAX_RETRIES && !inserted {
             //for the address the minimizer hash determines the block,
             //while kmer_hash and number of retries determines position inside the block
             let block_indice = ((hashed_kmer as usize) + (i+i.pow(2))/2) % Self::HT_BLOCK_SIZE;
             let current_address = block_address*Self::HT_BLOCK_SIZE + block_indice;
             
-            if self.table[block_address][block_indice] == kmer {
+            if block[block_indice] == kmer {
                 self.counters[current_address] = self.counters[current_address].saturating_add(1);
                 inserted = true;
             }
             //we check the last bit that corresponds to insertion or not
-            else if self.table[block_address][block_indice] == u64::MAX { //checking if unused
-                self.table[block_address][block_indice] = kmer;
+            else if block[block_indice] == u64::MAX { //checking if unused
+                block[block_indice] = kmer;
                 self.counters[current_address] = self.counters[current_address].saturating_add(1);
                 inserted = true;
             }
