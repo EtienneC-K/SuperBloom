@@ -10,8 +10,8 @@ use std::sync::Mutex;
 ///hash table taht will store all the kmers (but not yet their count)
 pub struct CountTable {
     table: Vec<Mutex<Vec<u64>>>, //ca store up to 31-mers bc of the chosen size
-    counters: Vec<u32>,
-    skip_counter: u64, //counts the amount of kmers that were not inserted
+    counters: Vec<Mutex<Vec<u8>>>,
+    skip_counter: Mutex<u64>, //counts the amount of kmers that were not inserted
     //zzero: PackedSeqVec,
 }
 
@@ -24,12 +24,16 @@ impl CountTable {
     
     pub fn new() -> Self {
         //let table: Vec<Mutex<Vec<u64>>> = vec![vec![u64::MAX; Self::HT_BLOCK_SIZE]; Self::HT_NB_BLOCKS];
+        //let counters: Vec<u32> = vec![0; Self::TABLE_SIZE];
         let mut table: Vec<Mutex<Vec<u64>>> = Vec::new();
         for _ in 0..Self::HT_NB_BLOCKS {
             table.push(Mutex::new(vec![u64::MAX; Self::HT_BLOCK_SIZE]));
         }
-        let counters: Vec<u32> = vec![0; Self::TABLE_SIZE];
-        let skip_counter: u64 = 0;
+        let mut counters: Vec<Mutex<Vec<u8>>> = Vec::new();
+        for _ in 0..Self::HT_NB_BLOCKS {
+            counters.push(Mutex::new(vec![0; Self::HT_BLOCK_SIZE]))
+        }
+        let skip_counter: Mutex<u64> = Mutex::new(0);
         assert_eq!(Self::HT_NB_BLOCKS, 1<<12);
         Self {
             table,
@@ -46,20 +50,21 @@ impl CountTable {
         let mut i: usize = 0;
         let block_address = hashed_minimizer as usize % Self::HT_NB_BLOCKS;
         let mut block = self.table[block_address].lock().unwrap();
+        let mut count_block = self.counters[block_address].lock().unwrap();
         while i<Self::MAX_RETRIES && !inserted {
             //for the address the minimizer hash determines the block,
             //while kmer_hash and number of retries determines position inside the block
             let block_indice = ((hashed_kmer as usize) + (i+i.pow(2))/2) % Self::HT_BLOCK_SIZE;
-            let current_address = block_address*Self::HT_BLOCK_SIZE + block_indice;
+            //let current_address = block_address*Self::HT_BLOCK_SIZE + block_indice;
             
             if block[block_indice] == kmer {
-                self.counters[current_address] = self.counters[current_address].saturating_add(1);
+                count_block[block_indice] = count_block[block_indice].saturating_add(1);
                 inserted = true;
             }
             //we check the last bit that corresponds to insertion or not
             else if block[block_indice] == u64::MAX { //checking if unused
                 block[block_indice] = kmer;
-                self.counters[current_address] = self.counters[current_address].saturating_add(1);
+                count_block[block_indice] = count_block[block_indice].saturating_add(1);
                 inserted = true;
             }
             //lets not forget to increment i
@@ -67,7 +72,8 @@ impl CountTable {
         }
         if !inserted {
             //that means we skip it
-            self.skip_counter = self.skip_counter.saturating_add(1);
+            let mut skip = self.skip_counter.lock().unwrap();
+            *skip = skip.saturating_add(1);
         }
     }
 
@@ -75,15 +81,19 @@ impl CountTable {
     ///higher than 255 being stored a the last cell
     pub fn calculate_output(&self) -> Vec<u64> {
         let mut final_count_vec: Vec<u64> = vec![0; 256];
-        for count in &self.counters {
-            if *count > 255 {
-                final_count_vec[255] = final_count_vec[255].saturating_add(1);
-            } else {
-                final_count_vec[*count as usize] = 
-                    final_count_vec[*count as usize].saturating_add(1);
+        for counter in &self.counters {
+            let unlocked_counter = counter.lock().unwrap();
+            for i in 0..unlocked_counter.len() {
+                let count = unlocked_counter[i];
+                if count > 255 {
+                    final_count_vec[255] = final_count_vec[255].saturating_add(1);
+                } else {
+                    final_count_vec[count as usize] = 
+                        final_count_vec[count as usize].saturating_add(1);
+                }
             }
         }
-        final_count_vec.push(self.skip_counter);
+        final_count_vec.push(*self.skip_counter.lock().unwrap());
         final_count_vec
     }
 
