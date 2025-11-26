@@ -17,9 +17,9 @@ pub struct CountTable {
 
 impl CountTable {
     //const TABLE_SIZE: usize = 450000000; //450 millions
-    const TABLE_SIZE: usize = 1<<22; //3.2 millions
+    const TABLE_SIZE: usize = 1<<28; //3.2 millions
     const MAX_RETRIES: usize = 10;
-    const HT_BLOCK_SIZE: usize = 1024;
+    const HT_BLOCK_SIZE: usize = 16384;
     const HT_NB_BLOCKS: usize = Self::TABLE_SIZE/Self::HT_BLOCK_SIZE;
     
     pub fn new() -> Self {
@@ -34,7 +34,7 @@ impl CountTable {
             counters.push(Mutex::new(vec![0; Self::HT_BLOCK_SIZE]))
         }
         let skip_counter: Mutex<u64> = Mutex::new(0);
-        assert_eq!(Self::HT_NB_BLOCKS, 1<<12);
+        assert_eq!(Self::HT_NB_BLOCKS, 1<<14);
         Self {
             table,
             counters,

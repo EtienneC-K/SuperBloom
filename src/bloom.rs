@@ -5,8 +5,8 @@ use bit_vec::BitVec;
 use std::sync::Mutex;
 
 //size of blocks, for now constants to fit a rather small L2 cache for labtops used in 2025
-pub const BLOCK_SIZE: usize = 1<<12; //2 097 152
-pub const NB_BLOCKS: usize = 1<<15; //16 384 for now, will see later to make it varaible
+pub const BLOCK_SIZE: usize = 1<<14; //2 097 152
+pub const NB_BLOCKS: usize = 1<<19; //16 384 for now, will see later to make it varaible
 
 pub struct BloomFilter {
     pub filter: Vec<Mutex<BitVec>>,

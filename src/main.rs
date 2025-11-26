@@ -34,12 +34,12 @@ fn main() {
     //let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
     //let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
     //let filename = read_arguments
-    let size: usize = 1<<27; // 34 359 738 368bits so 4 294 967 296bytes
+    let size: usize = 1<<33; // 34 359 738 368bits so 4 294 967 296bytes
     //let nb_blocks: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
     //number of threads allowed
     unsafe {
-        env::set_var("RAYON_NUM_THREADS", "2");
+        env::set_var("RAYON_NUM_THREADS", "10");
     }
 
     //for now check of size awith the blocks, later only two of them will be specified
