@@ -19,6 +19,7 @@ use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use bitvec::prelude::*;
 use std::env; //for backtrace
+use rayon::prelude::*;
 
 fn main() {
     //for debug
@@ -36,6 +37,11 @@ fn main() {
     let size: usize = 1<<27; // 34 359 738 368bits so 4 294 967 296bytes
     //let nb_blocks: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
+    //number of threads allowed
+    unsafe {
+        env::set_var("RAYON_NUM_THREADS", "2");
+    }
+
     //for now check of size awith the blocks, later only two of them will be specified
     assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
 
@@ -48,10 +54,15 @@ fn main() {
     let iter_files = read_fof(filename.to_string());
     //pin_mut!(iter_files); //needed for iteration
 
-    for fasta_name in iter_files {
+    //for fasta_name in iter_files {
+    //    let sequence = read_fasta(fasta_name);
+    //    handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
+    //}
+
+    iter_files.into_iter().par_bridge().for_each(|fasta_name| {
         let sequence = read_fasta(fasta_name);
-        handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
-    }
+        handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
+    });
 
 
     //maintenant on s'occupe de la sortie et tout la
@@ -61,8 +72,8 @@ fn main() {
 }
 
 fn handle_fasta(
-    bloom: &mut BloomFilter,
-    hash_table: &mut CountTable,
+    bloom: &BloomFilter,
+    hash_table: &CountTable,
     sequence: PackedSeqVec,
     k: u16,
     m: u16,
@@ -108,7 +119,7 @@ fn handle_fasta(
 }
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
-    bloom: &mut BloomFilter, hash_table: &mut CountTable, k: u16, hashed_minimizer: u64, 
+    bloom: &BloomFilter, hash_table: &CountTable, k: u16, hashed_minimizer: u64, 
     all_hashes: &Vec<Vec<u32>>, mut kmer_number: usize) -> usize {
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
