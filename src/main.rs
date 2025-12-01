@@ -11,45 +11,101 @@ mod output;
 
 use input::{read_fof, read_fasta};
 use minimizers::minimizers_x_positions;
-use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
+//use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
+use bloom::BloomFilter;
 use counter::{CountTable};
 use utils::{xorshift_u64};
 use output::write_output;
 use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
-use bitvec::prelude::*;
 use std::env; //for backtrace
 use rayon::prelude::*;
+use clap::Parser;
 
-fn main() {
+///taking care of all the needed command line arguments
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    ///path to the file of file
+    input: String,
+
+    ///output file (defautl is out.csv)
+    #[arg(short, long, default_value_t = String::from("out.csv"))]
+    output: String,
+
+    ///length of the kmers to count
+    #[arg(short, long, default_value_t = 31)]
+    k: u16,
+
+    ///length of the minimizers for grouping the kmers, has to be inferior to k
+    #[arg(short, long, default_value_t = 11)]
+    m: u16,
+
+    ///number of hashes for the bloom filter
+    #[arg(short, long, default_value_t = 7)]
+    n_hashes: usize,
+
+    ///size (in bits) of the bloom filter, expressed as a power of 2
+    #[arg(short, long, default_value_t = 33)]
+    size: usize,
+
+    ///size (in bits) of each of the bloom filters blocks, expressed as a power of 2
+    #[arg(short, long, default_value_t = 14)]
+    block_size: usize,
+
+    ///size (in number of slots) of the hash table for the final count, expressed as a power of 2 
+    #[arg(long, default_value_t = 28)]
+    table_size: usize,
+
+    ///size (in number of slots) of each of the hash table's blocks, as a power of 2
+    #[arg(long, default_value_t = 14)]
+    table_block_size: usize,
+
+    ///number of threads (default 1)
+    #[arg(short, long, default_value_t = String::from("1"))]
+    threads: String,
+
+}
+
+pub fn main() {
     //for debug
     unsafe {
         env::set_var("RUST_BACKTRACE", "1");
     }
+    //defining all variables constants that are based on the argument input
+    let args = Args::parse();
+    let k: u16 = args.k;
+    let m: u16 = args.m;
+    let n_hashes: usize = args.n_hashes;
+    let size: usize = 1<<args.size;
+    let block_size:usize = args.block_size;
+    let nb_blocks: usize = args.size/args.block_size;
+    let table_size: usize = args.table_size;
+    let table_block_size: usize = args.table_block_size;
     //read arguments
     //TODO take arguments instead of having constants over here
-    let k: u16 = 31;
-    let m: u16 = 11;
-    let n_hashes: usize = 7; //static 7 for now to aim for <1% false positives
+    //let k: u16 = 31;
+    //let m: u16 = 11;
+    //let n_hashes: usize = 7; //static 7 for now to aim for <1% false positives
     //let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
     //let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
     //let filename = read_arguments
-    let size: usize = 1<<33; // 34 359 738 368bits so 4 294 967 296bytes
+    //let size: usize = 1<<33; // 34 359 738 368bits so 4 294 967 296bytes
     //let nb_blocks: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
     //number of threads allowed
     unsafe {
-        env::set_var("RAYON_NUM_THREADS", "10");
+        env::set_var("RAYON_NUM_THREADS", args.threads);
     }
 
     //for now check of size awith the blocks, later only two of them will be specified
-    assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
+    //assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
 
     let filename = "fasta_reads/listing.txt";
 
     //we create the needed data structures to store everything
-    let mut bloom = BloomFilter::new(size, n_hashes, k as usize);
-    let mut hash_table = CountTable::new();
+    let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
+    let hash_table = CountTable::new(table_size, table_block_size);
 
     let iter_files = read_fof(filename.to_string());
     //pin_mut!(iter_files); //needed for iteration
@@ -61,7 +117,7 @@ fn main() {
 
     iter_files.into_iter().par_bridge().for_each(|fasta_name| {
         let sequence = read_fasta(fasta_name);
-        handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
+        handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
     });
 
 

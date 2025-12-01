@@ -1,7 +1,7 @@
 ///module with small utility fucntions
 
-use bitvec::prelude::*;
-use packed_seq::{PackedSeq, Seq};
+//use bitvec::prelude::*;
+//use packed_seq::{PackedSeq, Seq};
 
 ///hashing function for u64 using xorshift
 pub fn xorshift_u64(mut x: u64) -> u64 {
