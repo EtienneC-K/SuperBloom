@@ -78,10 +78,10 @@ pub fn main() {
     let m: u16 = args.m;
     let n_hashes: usize = args.n_hashes;
     let size: usize = 1<<args.size;
-    let block_size:usize = args.block_size;
+    let block_size:usize = 1<<args.block_size;
     let nb_blocks: usize = args.size/args.block_size;
-    let table_size: usize = args.table_size;
-    let table_block_size: usize = args.table_block_size;
+    let table_size: usize = 1<<args.table_size;
+    let table_block_size: usize = 1<<args.table_block_size;
     //read arguments
     //TODO take arguments instead of having constants over here
     //let k: u16 = 31;
