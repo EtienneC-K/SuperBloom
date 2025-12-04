@@ -9,7 +9,7 @@ mod utils;
 mod counter;
 mod output;
 
-use input::{read_fof, read_fasta};
+use input::{read_fof, read_fasta, read_lines};
 use minimizers::minimizers_x_positions;
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
@@ -65,6 +65,12 @@ struct Args {
     #[arg(short, long, default_value_t = String::from("1"))]
     threads: String,
 
+    ///input method, can be 0 for a file of file directing to single fastas, or 1 for a single
+    ///multi_fasta (in which case we assume very hard that lines' lenghts do not cap a 80, but at the 
+    ///reads' lengths)
+    #[arg(long, default_value_t = 0)]
+    input_type: u8,
+
 }
 
 pub fn main() {
@@ -82,16 +88,6 @@ pub fn main() {
     let nb_blocks: usize = size/block_size;
     let table_size: usize = 1<<args.table_size;
     let table_block_size: usize = 1<<args.table_block_size;
-    //read arguments
-    //TODO take arguments instead of having constants over here
-    //let k: u16 = 31;
-    //let m: u16 = 11;
-    //let n_hashes: usize = 7; //static 7 for now to aim for <1% false positives
-    //let nb_blocks: usize = 1<<14; //16 384 for now, will see later to make it varaible
-    //let size: usize = 1<<35; // 34 359 738 368bits so 4 294 967 296bytes
-    //let filename = read_arguments
-    //let size: usize = 1<<33; // 34 359 738 368bits so 4 294 967 296bytes
-    //let nb_blocks: usize = 1<<15; //16 384 for now, will see later to make it varaible
 
     //number of threads allowed
     unsafe {
@@ -101,25 +97,46 @@ pub fn main() {
     //for now check of size awith the blocks, later only two of them will be specified
     //assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
 
-    let filename = "fasta_reads/listing.txt";
+    let filename = args.input;
 
     //we create the needed data structures to store everything
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
     let hash_table = CountTable::new(table_size, table_block_size);
 
-    let iter_files = read_fof(filename.to_string());
-    //pin_mut!(iter_files); //needed for iteration
+    //now we parse and treat each input method
+    if args.input_type == 0 {
+        let iter_files = read_fof(filename.to_string());
+        iter_files.into_iter().par_bridge().for_each(|fasta_name| {
+            let sequence = read_fasta(fasta_name);
+            handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+        });
+    } else if args.input_type == 1 {
+        //reading all lines in parallel, hoping namely to not overflow the ram
+        if let Ok(lines) = read_lines(filename) {
+            lines.into_iter().par_bridge().for_each(|wrapped_line| {
+                let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
+                if line.len() > k as usize 
+                    && line.as_bytes()[0] != b'>' 
+                    && line.as_bytes()[0] != b'@' {
+
+                    // /!\/!\ assuming single line writing, so that each line corresponds to a
+                    // sequence
+
+                    //with this assumption make a packedseq from the sequence
+                    let sequence = PackedSeqVec::from_ascii(line.as_bytes());
+                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+                }
+            })
+        }
+
+    } else {
+        panic!("Unrecognized input type, must be 0 or 1");
+    }
 
     //for fasta_name in iter_files {
     //    let sequence = read_fasta(fasta_name);
     //    handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
     //}
-
-    iter_files.into_iter().par_bridge().for_each(|fasta_name| {
-        let sequence = read_fasta(fasta_name);
-        handle_fasta(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
-    });
-
 
     //maintenant on s'occupe de la sortie et tout la
     let final_count: Vec<u64> = hash_table.calculate_output();
@@ -127,7 +144,7 @@ pub fn main() {
 
 }
 
-fn handle_fasta(
+fn handle_sequence(
     bloom: &BloomFilter,
     hash_table: &CountTable,
     sequence: PackedSeqVec,

@@ -47,7 +47,7 @@ pub fn read_fof(fof_file: String) -> Vec<String> {
 //     maybe later idk                               //
 
 ///classic function to simply read any file line by line efficiently
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where P: AsRef<Path>, {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
