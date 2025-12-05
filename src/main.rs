@@ -21,6 +21,8 @@ use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
 use rayon::prelude::*;
 use clap::Parser;
+use std::collections::HashMap;
+use ahash::{AHasher, RandomState};
 
 ///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
@@ -101,14 +103,14 @@ pub fn main() {
 
     //we create the needed data structures to store everything
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
-    let hash_table = CountTable::new(table_size, table_block_size);
+    let ahash_table = CountTable::new(table_size, table_block_size);
 
     //now we parse and treat each input method
     if args.input_type == 0 {
         let iter_files = read_fof(filename.to_string());
         iter_files.into_iter().par_bridge().for_each(|fasta_name| {
             let sequence = read_fasta(fasta_name);
-            handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+            handle_sequence(&bloom, &ahash_table, sequence, k, m, n_hashes, nb_blocks);
         });
     } else if args.input_type == 1 {
         //reading all lines in parallel, hoping namely to not overflow the ram
@@ -124,7 +126,7 @@ pub fn main() {
 
                     //with this assumption make a packedseq from the sequence
                     let sequence = PackedSeqVec::from_ascii(line.as_bytes());
-                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+                    handle_sequence(&bloom, &ahash_table, sequence, k, m, n_hashes, nb_blocks);
                 }
             })
         }
@@ -139,7 +141,7 @@ pub fn main() {
     //}
 
     //maintenant on s'occupe de la sortie et tout la
-    let final_count: Vec<u64> = hash_table.calculate_output();
+    let final_count: Vec<u64> = ahash_table.calculate_output();
     let _ = write_output(&final_count);
 
 }
@@ -209,9 +211,11 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
             let kmer_hash = all_hashes[0][kmer_number];
             //let bitvec_kmer: BitVec = convert_seqkmer(kmer);
             //we take the first hash for the hash table as it seem to not rlly matter
-            hash_table.insert(kmer.as_u64(), kmer_hash, hashed_minimizer);
+            //hash_table.insert(kmer.as_u64(), kmer_hash, hashed_minimizer);
+            hash_table.insert(kmer.as_u64(), hashed_minimizer);
         }
         kmer_number+=1;
     }
     kmer_number
 }
+
