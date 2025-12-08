@@ -71,6 +71,11 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     input_type: u8,
 
+    ///argument to set the blocks to match one to one the minimizers, based on minimizer length,
+    ///and bloom size and overrides the blocksize
+    #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    one_to_one: bool,
+
 }
 
 pub fn main() {
@@ -84,10 +89,17 @@ pub fn main() {
     let m: u16 = args.m;
     let n_hashes: usize = args.n_hashes;
     let size: usize = 1<<args.size;
-    let block_size:usize = 1<<args.block_size;
-    let nb_blocks: usize = size/block_size;
+    let mut block_size:usize = 1<<args.block_size;
+    let mut nb_blocks: usize = size/block_size;
     let table_size: usize = 1<<args.table_size;
     let table_block_size: usize = 1<<args.table_block_size;
+    let one_to_one: bool = args.one_to_one;
+
+    //for the special case where i want to map 
+    if one_to_one {
+        nb_blocks = 1<<(2*m);
+        block_size = size/nb_blocks;
+    }
 
     //number of threads allowed
     unsafe {
@@ -108,7 +120,7 @@ pub fn main() {
         let iter_files = read_fof(filename.to_string());
         iter_files.into_iter().par_bridge().for_each(|fasta_name| {
             let sequence = read_fasta(fasta_name);
-            handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+            handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, one_to_one);
         });
     } else if args.input_type == 1 {
         //reading all lines in parallel, hoping namely to not overflow the ram
@@ -124,7 +136,8 @@ pub fn main() {
 
                     //with this assumption make a packedseq from the sequence
                     let sequence = PackedSeqVec::from_ascii(line.as_bytes());
-                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks);
+                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
+                        one_to_one);
                 }
             })
         }
@@ -152,6 +165,7 @@ fn handle_sequence(
     m: u16,
     n_hashes: usize,
     nb_blocks: usize,
+    one_to_one: bool,
     ) {
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
                                                     = minimizers_x_positions(sequence, k, m);
@@ -174,15 +188,24 @@ fn handle_sequence(
     for i in 0..super_kmers_positions.len()-1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
-        let hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
+        let hashed_minimizer: u64;
+        if one_to_one {
+            hashed_minimizer = minimizer_values[i]%(nb_blocks as u64);
+        } else {
+            hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
+        }
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
         kmer_number = 
             handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
             n_hashes, bloom, hash_table, k, hashed_minimizer, &all_hashes, kmer_number);
     }
     //pas oublier le dernier morceau de la liste a évaluer maintenant
-    let hashed_minimizer = 
-        xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
+    let hashed_minimizer: u64;
+    if one_to_one {
+        hashed_minimizer = minimizer_values[minimizer_values.len()-1]%(nb_blocks as u64);
+    } else {
+        hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
+    }
     let _ = 
         handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
         (sequence.len()-1-k as usize) as u32,
