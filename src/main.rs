@@ -155,6 +155,14 @@ pub fn main() {
     let final_count: Vec<u64> = hash_table.calculate_output();
     let _ = write_output(&final_count);
 
+    //check des taux de remplissage
+    let taux_bloom = bloom.check_true_bits();
+    let proportion_bloom: f64 = (taux_bloom as f64)/(size as f64);
+    let taux_ht = hash_table.check_filling();
+    let proportion_ht: f64 = (taux_ht as f64)/(table_size as f64);
+    println!("Remplissage du bloom {taux_bloom} ce qui représente une proportion de {proportion_bloom}");
+    println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
+
 }
 
 fn handle_sequence(

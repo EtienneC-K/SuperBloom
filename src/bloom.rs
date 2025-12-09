@@ -50,7 +50,7 @@ impl BloomFilter {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%self.block_size;
-            if !block.get(address).unwrap_or(false) {
+            if !block.get(address).unwrap() {
                 block.set(address, true);
                 present = false;
             }
@@ -58,15 +58,18 @@ impl BloomFilter {
         present
     }
 
-    //pub fn check_true_bits(&self) -> usize {
-    //    let mut counter: usize = 0;
-    //    for i in 0..4294967296 {
-    //        if self.filter.get(i).unwrap() {
-    //            counter += 1;
-    //        }
-    //    }
-    //    counter
-    //}
+    pub fn check_true_bits(&self) -> usize {
+        let mut counter: usize = 0;
+        for block in &self.filter {
+            let unlocked_block = block.lock().unwrap();
+            for i in 0..unlocked_block.len() {
+                if unlocked_block.get(i).unwrap() {
+                    counter += 1;
+                }
+            }
+        }
+        counter
+    }
 }
 
 

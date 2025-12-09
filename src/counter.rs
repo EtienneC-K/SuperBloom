@@ -97,6 +97,17 @@ impl CountTable {
         final_count_vec
     }
 
-
-    //fonction qui sert pour réaliser "l'histogramme" de sorti
+    ///function used to check how much of the hash_table is filled
+    pub fn check_filling(&self) -> usize {
+        let mut total_count: usize = 0;
+        for block in &self.counters {
+            let unlocked_block = block.lock().unwrap();
+            for i in 0..unlocked_block.len() {
+                if unlocked_block[i] > 0 {
+                    total_count += 1;
+                }
+            }
+        }
+        total_count
+    }
 }
