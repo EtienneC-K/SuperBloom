@@ -169,11 +169,32 @@ pub fn main() {
     let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
     let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
 
+    let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
+    let n_z_ht_rate: f64 = n_z_ht as f64/table_size as f64;
+    let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
+    let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
+    let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
+
+    println!("------------------------------------------------------------");
+    println!("");
     println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
     println!("Max bloom fill rate : {max_bloom_rate}");
     println!("Median fill rate : {median_bloom_rate}");
     println!("Average fill rate : {average_bloom_rate}");
 
+    println!("");
+
+    println!("Non zero ht block rates : {n_z_ht_rate}");
+    println!("Max ht fill rate : {max_ht_rate}");
+    println!("Median ht fill rate : {median_ht_rate}");
+    println!("Average ht fill rate : {average_ht_rate}");
+
+    println!("");
+
+    println!("And with all that we get a fill rate of {0}", 
+        *hash_table.skip_counter.lock().unwrap());
+    println!("");
+    println!("------------------------------------------------------------");
 }
 
 fn handle_sequence(

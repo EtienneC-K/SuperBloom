@@ -2,12 +2,14 @@
 ///have passed through the bloom filter
 
 use std::sync::Mutex;
+use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::prelude::ParallelSliceMut;
 
 ///hash table taht will store all the kmers (but not yet their count)
 pub struct CountTable {
     table: Vec<Mutex<Vec<u64>>>, //ca store up to 31-mers bc of the chosen size
     counters: Vec<Mutex<Vec<u8>>>,
-    skip_counter: Mutex<u64>, //counts the amount of kmers that were not inserted
+    pub skip_counter: Mutex<u64>, //counts the amount of kmers that were not inserted
     //table_size: usize,
     ht_block_size: usize,
     ht_nb_blocks: usize,
@@ -110,4 +112,42 @@ impl CountTable {
         }
         total_count
     }
+
+    ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
+    ///returns : count of non epty blocks, max filled count, median filled count, avrg filled count
+    pub fn count_it_all(&self) -> (usize, usize, usize, usize) {
+        //first make a list with all non zero rates
+        let counts_list: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        let total_counter: Mutex<usize> = Mutex::new(0);
+        let _ = &self.counters.iter().par_bridge().for_each(|block| {
+            let unlocked_block = block.lock().unwrap();
+            let mut counter: usize = 0;
+            for i in 0..unlocked_block.len() {
+                if *unlocked_block.get(i).unwrap() > 0 {
+                    counter += 1;
+                }
+            }
+            if counter > 0 {
+                let mut el_liste = counts_list.lock().unwrap();
+                el_liste.push(counter);
+                drop(el_liste);
+                let mut el_counter = total_counter.lock().unwrap();
+                *el_counter = el_counter.saturating_add(counter);
+                drop (el_counter)
+            }
+        });
+
+        //once we have the list, its time to sort it
+        let mut unlocked_counts_list = counts_list.lock().unwrap();
+        unlocked_counts_list.par_sort_unstable();
+
+        //now to calculate what we're looking for
+        let non_zero_counters: usize = unlocked_counts_list.len();
+        let max_counter: usize = unlocked_counts_list[unlocked_counts_list.len()-1];
+        let median_counter: usize = unlocked_counts_list[unlocked_counts_list.len()/2 - 1];
+        let average_counter: usize = *total_counter.lock().unwrap()/unlocked_counts_list.len();
+
+        (non_zero_counters, max_counter, median_counter, average_counter)
+    }
+
 }
