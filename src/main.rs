@@ -156,12 +156,23 @@ pub fn main() {
     let _ = write_output(&final_count);
 
     //check des taux de remplissage
-    let taux_bloom = bloom.check_true_bits();
-    let proportion_bloom: f64 = (taux_bloom as f64)/(size as f64);
-    let taux_ht = hash_table.check_filling();
-    let proportion_ht: f64 = (taux_ht as f64)/(table_size as f64);
-    println!("Remplissage du bloom {taux_bloom} ce qui représente une proportion de {proportion_bloom}");
-    println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
+    //let taux_bloom = bloom.check_true_bits();
+    //let proportion_bloom: f64 = (taux_bloom as f64)/(size as f64);
+    //let taux_ht = hash_table.check_filling();
+    //let proportion_ht: f64 = (taux_ht as f64)/(table_size as f64);
+    //println!("Remplissage du bloom {taux_bloom} ce qui représente une proportion de {proportion_bloom}");
+    //println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
+
+    let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+    let n_z_bloom_rate: f64 = n_z_bloom as f64/size as f64;
+    let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
+    let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
+    let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
+
+    println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
+    println!("Max bloom fill rate : {max_bloom_rate}");
+    println!("Median fill rate : {median_bloom_rate}");
+    println!("Average fill rate : {average_bloom_rate}");
 
 }
 
