@@ -5,8 +5,8 @@
 
 ///hashing function for u64 using xorshift
 pub fn xorshift_u64(mut x: u64) -> u64 {
-    //x ^= x<<13;
-    //x ^= x>>7;
-    //x ^= x<<17;
-    x*6512354987432
+    x ^= x<<13;
+    x ^= x>>7;
+    x ^= x<<17;
+    x
 }

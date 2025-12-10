@@ -76,6 +76,10 @@ struct Args {
     #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     one_to_one: bool,
 
+    ///number of reads to be distributed in a row to each thread
+    #[arg(long, default_value_t = 100)]
+    sequential_fallback: usize,
+
 }
 
 pub fn main() {
@@ -94,6 +98,7 @@ pub fn main() {
     let table_size: usize = 1<<args.table_size;
     let table_block_size: usize = 1<<args.table_block_size;
     let one_to_one: bool = args.one_to_one;
+    let sequential_fallback: usize = args.sequential_fallback;
 
     //for the special case where i want to map 
     if one_to_one {
@@ -164,19 +169,20 @@ pub fn main() {
     //println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
 
     let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
-    let n_z_bloom_rate: f64 = n_z_bloom as f64/size as f64;
+    let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
     let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
     let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
     let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
 
     let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
-    let n_z_ht_rate: f64 = n_z_ht as f64/table_size as f64;
+    let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
     let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
     let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
     let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
 
     println!("------------------------------------------------------------");
     println!("");
+    println!("Non zero bf amount : {n_z_bloom}");
     println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
     println!("Max bloom fill rate : {max_bloom_rate}");
     println!("Median fill rate : {median_bloom_rate}");
@@ -184,6 +190,7 @@ pub fn main() {
 
     println!("");
 
+    println!("Non zero ht amount : {n_z_ht}");
     println!("Non zero ht block rates : {n_z_ht_rate}");
     println!("Max ht fill rate : {max_ht_rate}");
     println!("Median ht fill rate : {median_ht_rate}");
