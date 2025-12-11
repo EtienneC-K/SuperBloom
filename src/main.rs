@@ -9,7 +9,7 @@ mod utils;
 mod counter;
 mod output;
 
-use input::{read_fof, read_fasta, read_lines};
+use input::{read_fof, read_fasta, read_lines, FastaReader};
 use minimizers::minimizers_x_positions;
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
@@ -21,6 +21,10 @@ use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
 use rayon::prelude::*;
 use clap::Parser;
+use itertools::Itertools;
+use std::io::BufReader;
+use std::fs::File;
+use std::io::BufRead;
 
 ///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
@@ -123,15 +127,46 @@ pub fn main() {
     //now we parse and treat each input method
     if args.input_type == 0 {
         let iter_files = read_fof(filename.to_string());
-        iter_files.into_iter().par_bridge().for_each(|fasta_name| {
-            let sequence = read_fasta(fasta_name);
-            handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, one_to_one);
+        iter_files.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
+            for line in chunk {
+                let sequence = read_fasta(line.to_string());
+                handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, one_to_one);
+            }
         });
     } else if args.input_type == 1 {
         //reading all lines in parallel, hoping namely to not overflow the ram
-        if let Ok(lines) = read_lines(filename) {
-            lines.into_iter().par_bridge().for_each(|wrapped_line| {
-                let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
+        //if let Ok(lines) = read_lines(filename) {
+        //    lines.into_iter().chunks(sequential_fallback).par_bridge().for_each(|chunk| {
+        //        for wrapped_line in chunk {
+        //            let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
+        //            if line.len() > k as usize 
+        //                && line.as_bytes()[0] != b'>' 
+        //                && line.as_bytes()[0] != b'@' {
+
+        //                // /!\/!\ assuming single line writing, so that each line corresponds to a
+        //                // sequence
+
+        //                //with this assumption make a packedseq from the sequence
+        //                let sequence = PackedSeqVec::from_ascii(line.as_bytes());
+        //                handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
+        //                    one_to_one);
+        //            }
+        //        }
+        //    })
+        //}
+
+        let file = File::open(filename).unwrap();
+        let reader = BufReader::new(file);
+        let lines = reader.lines();
+
+        let chunked_lines = FastaReader {
+            lines,
+            chunk_size : sequential_fallback,
+        };
+
+        chunked_lines.par_bridge().for_each(|chunk| {
+            for line in chunk {
+                //let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
                 if line.len() > k as usize 
                     && line.as_bytes()[0] != b'>' 
                     && line.as_bytes()[0] != b'@' {
@@ -144,8 +179,8 @@ pub fn main() {
                     handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
                         one_to_one);
                 }
-            })
-        }
+            }
+        })
 
     } else {
         panic!("Unrecognized input type, must be 0 or 1");
@@ -182,6 +217,14 @@ pub fn main() {
 
     println!("------------------------------------------------------------");
     println!("");
+    println!("Parameters : ");
+    println!("k : {k}, m: {m}");
+    println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
+    println!("ht size : {table_size}, block size {table_block_size}, nb_blocks {0}", table_size/table_block_size);
+    println!("sequetial fallback : {sequential_fallback}");
+
+    println!("");
+
     println!("Non zero bf amount : {n_z_bloom}");
     println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
     println!("Max bloom fill rate : {max_bloom_rate}");
@@ -198,7 +241,7 @@ pub fn main() {
 
     println!("");
 
-    println!("And with all that we get a fill rate of {0}", 
+    println!("And with all that we get a skip amount of {0}", 
         *hash_table.skip_counter.lock().unwrap());
     println!("");
     println!("------------------------------------------------------------");

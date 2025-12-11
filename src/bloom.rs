@@ -5,13 +5,14 @@ use bit_vec::BitVec;
 use std::sync::Mutex;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::prelude::ParallelSliceMut;
+use std::ops::Deref;
 
 //size of blocks, for now constants to fit a rather small L2 cache for labtops used in 2025
 //pub const BLOCK_SIZE: usize = 1<<14; //2 097 152
 //pub const NB_BLOCKS: usize = 1<<19; //16 384 for now, will see later to make it varaible
 
 pub struct BloomFilter {
-    pub filter: Vec<Mutex<BitVec>>,
+    pub filter: Vec<Mutex<Vec<BitVec>>>,
     pub hashers: Vec<NtHasher>, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
     block_size: usize,
     nb_blocks: usize,
@@ -21,9 +22,13 @@ impl BloomFilter {
     pub fn new_with_seed(size: usize, n_hashes: usize, seed: u32, k: usize, block_size: usize, 
         nb_blocks: usize) -> Self {
 
-        let mut filter: Vec<Mutex<BitVec>> = Vec::new();
-        for _ in 0..(size/block_size) {
-            filter.push(Mutex::new(BitVec::from_elem(block_size, false)));
+        let magic_mutex_amount = 1024;
+        assert!(magic_mutex_amount*block_size<size);
+        assert!(nb_blocks>magic_mutex_amount);
+        let mut filter: Vec<Mutex<Vec<BitVec>>> = Vec::new();
+        for _ in 0..magic_mutex_amount {
+            filter.push(Mutex::new(vec![BitVec::from_elem(block_size, false);
+                                        size/(block_size*magic_mutex_amount)]));
         }
         Self {
             //size,
@@ -45,32 +50,36 @@ impl BloomFilter {
     ///inside the bloom filter, inserts it if needed
     pub fn check_and_insert(&self, hashed_minimizer: u64, kmer_s_hashes: Vec<u32>) -> bool {
         let mut present: bool = true;
-        let blocknum: usize = (hashed_minimizer as usize)%self.nb_blocks;
+        let blocknum: usize = (hashed_minimizer as usize)%1024;
+        let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
         let mut block = self.filter[blocknum].lock().unwrap();
-        
+        let mut subblock = &mut block[subblocknum];
+
         for hash in kmer_s_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%self.block_size;
-            if !block.get(address).unwrap() {
-                block.set(address, true);
+            if !subblock.get(address).unwrap() {
+                subblock.set(address, true);
                 present = false;
             }
         }
         present
     }
 
+    ///now unusable and wrong because of change in format of the filter
     pub fn check_true_bits(&self) -> usize {
-        let mut counter: usize = 0;
-        for block in &self.filter {
-            let unlocked_block = block.lock().unwrap();
-            for i in 0..unlocked_block.len() {
-                if unlocked_block.get(i).unwrap() {
-                    counter += 1;
-                }
-            }
-        }
-        counter
+        //let mut counter: usize = 0;
+        //for block in &self.filter {
+        //    let unlocked_block = block.lock().unwrap();
+        //    for i in 0..unlocked_block.len() {
+        //        if unlocked_block.get(i).unwrap() {
+        //            counter += 1;
+        //        }
+        //    }
+        //}
+        //counter
+        1
     }
 
     ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
@@ -80,11 +89,13 @@ impl BloomFilter {
         let counts_list: Mutex<Vec<usize>> = Mutex::new(Vec::new());
         let total_counter: Mutex<usize> = Mutex::new(0);
         let _ = &self.filter.iter().par_bridge().for_each(|block| {
-            let unlocked_block = block.lock().unwrap();
+            let unlocked_block = block.lock().unwrap(); //its a Vec<BitVec>
             let mut counter: usize = 0;
-            for i in 0..unlocked_block.len() {
-                if unlocked_block.get(i).unwrap() {
-                    counter += 1;
+            for bit_vector in unlocked_block.deref() {
+                for i in 0..bit_vector.len() {
+                    if bit_vector.get(i).unwrap() {
+                        counter += 1;
+                    }
                 }
             }
             if counter > 0 {
@@ -93,7 +104,7 @@ impl BloomFilter {
                 drop(el_liste);
                 let mut el_counter = total_counter.lock().unwrap();
                 *el_counter = el_counter.saturating_add(counter);
-                drop (el_counter)
+                drop(el_counter)
             }
         });
 

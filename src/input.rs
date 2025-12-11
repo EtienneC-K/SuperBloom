@@ -52,3 +52,33 @@ where P: AsRef<Path>, {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
 }
+
+pub struct FastaReader<I> {
+    pub lines: I,
+    pub chunk_size: usize,
+}
+
+impl<I> Iterator for FastaReader<I>
+where 
+    I: Iterator<Item = io::Result<String>>,{
+        type Item = Vec<String>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let mut chunk = Vec::with_capacity(self.chunk_size);
+            for _ in 0..self.chunk_size {
+                if let Some(line) = self.lines.next() {
+                    match line {
+                        Ok(content) => chunk.push(content),
+                        Err(_) => break,
+                    }
+                } else {
+                    break;
+                }
+            }
+            if chunk.is_empty() {
+                None
+            } else {
+                Some(chunk)
+            }
+        }
+}
