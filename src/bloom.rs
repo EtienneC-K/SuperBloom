@@ -90,21 +90,21 @@ impl BloomFilter {
         let total_counter: Mutex<usize> = Mutex::new(0);
         let _ = &self.filter.iter().par_bridge().for_each(|block| {
             let unlocked_block = block.lock().unwrap(); //its a Vec<BitVec>
-            let mut counter: usize = 0;
             for bit_vector in unlocked_block.deref() {
+                let mut counter: usize = 0;
                 for i in 0..bit_vector.len() {
                     if bit_vector.get(i).unwrap() {
                         counter += 1;
                     }
                 }
-            }
-            if counter > 0 {
-                let mut el_liste = counts_list.lock().unwrap();
-                el_liste.push(counter);
-                drop(el_liste);
-                let mut el_counter = total_counter.lock().unwrap();
-                *el_counter = el_counter.saturating_add(counter);
-                drop(el_counter)
+                if counter > 0 {
+                    let mut el_liste = counts_list.lock().unwrap();
+                    el_liste.push(counter);
+                    drop(el_liste);
+                    let mut el_counter = total_counter.lock().unwrap();
+                    *el_counter = el_counter.saturating_add(counter);
+                    drop(el_counter)
+                }
             }
         });
 
