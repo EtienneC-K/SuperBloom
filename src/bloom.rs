@@ -23,8 +23,8 @@ impl BloomFilter {
         nb_blocks: usize) -> Self {
 
         let magic_mutex_amount = 1024;
-        assert!(magic_mutex_amount*block_size<size);
-        assert!(nb_blocks>magic_mutex_amount);
+        assert!(magic_mutex_amount*block_size <= size);
+        assert!(nb_blocks >= magic_mutex_amount);
         let mut filter: Vec<Mutex<Vec<BitVec>>> = Vec::new();
         for _ in 0..magic_mutex_amount {
             filter.push(Mutex::new(vec![BitVec::from_elem(block_size, false);

@@ -88,6 +88,14 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     counting: bool,
 
+    ///to disable all code referring to the hash_table, for testing without it
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    no_hashtable: bool,
+
+    ///to disable all code referring to the bloom filter, enables no_hashtable
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    no_bloom: bool,
+
 }
 
 pub fn main() {
@@ -100,18 +108,31 @@ pub fn main() {
     let k: u16 = args.k;
     let m: u16 = args.m;
     let n_hashes: usize = args.n_hashes;
-    let size: usize = 1<<args.size;
+    let mut size: usize = 1<<args.size;
     let mut block_size:usize = 1<<args.block_size;
     let mut nb_blocks: usize = size/block_size;
-    let table_size: usize = 1<<args.table_size;
-    let table_block_size: usize = 1<<args.table_block_size;
+    let mut table_size: usize = 1<<args.table_size;
+    let mut table_block_size: usize = 1<<args.table_block_size;
     let one_to_one: bool = args.one_to_one;
     let sequential_fallback: usize = args.sequential_fallback;
+    let no_bloom: bool = args.no_bloom;
+    let no_hashtable: bool = args.no_bloom || args.no_hashtable;
 
     //for the special case where i want to map 
     if one_to_one {
         nb_blocks = 1<<(2*m);
         block_size = size/nb_blocks;
+    }
+
+    if no_bloom {
+        size = 1024;
+        block_size = 1;
+        nb_blocks = 1024;
+    }
+
+    if no_hashtable {
+        table_size = 1024;
+        table_block_size = 1;
     }
 
     //number of threads allowed
@@ -134,31 +155,11 @@ pub fn main() {
         iter_files.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
             for line in chunk {
                 let sequence = read_fasta(line.to_string());
-                handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, one_to_one);
+                handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, 
+                    one_to_one, no_bloom, no_hashtable);
             }
         });
     } else if args.input_type == 1 {
-        //reading all lines in parallel, hoping namely to not overflow the ram
-        //if let Ok(lines) = read_lines(filename) {
-        //    lines.into_iter().chunks(sequential_fallback).par_bridge().for_each(|chunk| {
-        //        for wrapped_line in chunk {
-        //            let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
-        //            if line.len() > k as usize 
-        //                && line.as_bytes()[0] != b'>' 
-        //                && line.as_bytes()[0] != b'@' {
-
-        //                // /!\/!\ assuming single line writing, so that each line corresponds to a
-        //                // sequence
-
-        //                //with this assumption make a packedseq from the sequence
-        //                let sequence = PackedSeqVec::from_ascii(line.as_bytes());
-        //                handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
-        //                    one_to_one);
-        //            }
-        //        }
-        //    })
-        //}
-
         let file = File::open(filename).unwrap();
         let reader = BufReader::new(file);
         let lines = reader.lines();
@@ -181,7 +182,7 @@ pub fn main() {
                     //with this assumption make a packedseq from the sequence
                     let sequence = PackedSeqVec::from_ascii(line.as_bytes());
                     handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
-                        one_to_one);
+                        one_to_one, no_bloom, no_hashtable);
                 }
             }
         })
@@ -218,31 +219,36 @@ pub fn main() {
     println!("");
  
     if args.counting {
-        let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
-        let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
-        let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
-        let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
-        let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
 
-        let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
-        let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
-        let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
-        let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
-        let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
+        if !no_bloom {
+            let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+            let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
+            let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
+            let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
+            let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
 
-        println!("Non zero bf amount : {n_z_bloom}");
-        println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
-        println!("Max bloom fill rate : {max_bloom_rate}");
-        println!("Median fill rate : {median_bloom_rate}");
-        println!("Average fill rate : {average_bloom_rate}");
+            println!("Non zero bf amount : {n_z_bloom}");
+            println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
+            println!("Max bloom fill rate : {max_bloom_rate}");
+            println!("Median fill rate : {median_bloom_rate}");
+            println!("Average fill rate : {average_bloom_rate}");
+        }
 
         println!("");
 
-        println!("Non zero ht amount : {n_z_ht}");
-        println!("Non zero ht block rates : {n_z_ht_rate}");
-        println!("Max ht fill rate : {max_ht_rate}");
-        println!("Median ht fill rate : {median_ht_rate}");
-        println!("Average ht fill rate : {average_ht_rate}");
+        if !no_hashtable {
+            let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
+            let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
+            let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
+            let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
+            let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
+
+            println!("Non zero ht amount : {n_z_ht}");
+            println!("Non zero ht block rates : {n_z_ht_rate}");
+            println!("Max ht fill rate : {max_ht_rate}");
+            println!("Median ht fill rate : {median_ht_rate}");
+            println!("Average ht fill rate : {average_ht_rate}");
+        }
 
         println!("");
     }
@@ -262,6 +268,8 @@ fn handle_sequence(
     n_hashes: usize,
     nb_blocks: usize,
     one_to_one: bool,
+    no_bloom: bool,
+    no_hashtable: bool,
     ) {
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
                                                     = minimizers_x_positions(sequence, k, m);
@@ -291,9 +299,15 @@ fn handle_sequence(
             hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
         }
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
-        kmer_number = 
-            handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-            n_hashes, bloom, hash_table, k, hashed_minimizer, &all_hashes, kmer_number);
+        if no_bloom {
+            // TODO sum hashes to be sure no optim that bypasses this shit
+            return
+        } else {
+            kmer_number = 
+                handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
+                n_hashes, bloom, hash_table, k, hashed_minimizer, &all_hashes, kmer_number,
+                no_hashtable);
+        }
     }
     //pas oublier le dernier morceau de la liste a évaluer maintenant
     let hashed_minimizer: u64;
@@ -302,17 +316,22 @@ fn handle_sequence(
     } else {
         hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
     }
-    let _ = 
-        handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
-        (sequence.len()-1-k as usize) as u32,
-        &sequence, 
-        n_hashes, bloom, hash_table, k, hashed_minimizer,
-        &all_hashes, kmer_number);
+    if no_bloom {
+        // TODO no bloom over here as well
+        return
+    } else {
+        let _ = 
+            handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
+            (sequence.len()-1-k as usize) as u32,
+            &sequence, 
+            n_hashes, bloom, hash_table, k, hashed_minimizer,
+            &all_hashes, kmer_number, no_hashtable);
+    }
 }
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
     bloom: &BloomFilter, hash_table: &CountTable, k: u16, hashed_minimizer: u64, 
-    all_hashes: &Vec<Vec<u32>>, mut kmer_number: usize) -> usize {
+    all_hashes: &Vec<Vec<u32>>, mut kmer_number: usize, no_hashtable: bool) -> usize {
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
         let mut kmer_s_hashes: Vec<u32> = Vec::new();
@@ -324,7 +343,7 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
-        if already_in {
+        if already_in && !no_hashtable {
             let kmer_hash = all_hashes[0][kmer_number];
             //let bitvec_kmer: BitVec = convert_seqkmer(kmer);
             //we take the first hash for the hash table as it seem to not rlly matter
