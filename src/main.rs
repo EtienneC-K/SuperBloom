@@ -84,6 +84,10 @@ struct Args {
     #[arg(long, default_value_t = 100)]
     sequential_fallback: usize,
 
+    //to enable counting outputs, that take time outside of the actual algorithm
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    counting: bool,
+
 }
 
 pub fn main() {
@@ -203,18 +207,6 @@ pub fn main() {
     //println!("Remplissage du bloom {taux_bloom} ce qui représente une proportion de {proportion_bloom}");
     //println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
 
-    let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
-    let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
-    let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
-    let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
-    let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-
-    let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
-    let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
-    let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
-    let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
-    let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
-
     println!("------------------------------------------------------------");
     println!("");
     println!("Parameters : ");
@@ -222,24 +214,38 @@ pub fn main() {
     println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
     println!("ht size : {table_size}, block size {table_block_size}, nb_blocks {0}", table_size/table_block_size);
     println!("sequetial fallback : {sequential_fallback}");
-
+ 
     println!("");
+ 
+    if args.counting {
+        let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+        let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
+        let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
+        let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
+        let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
 
-    println!("Non zero bf amount : {n_z_bloom}");
-    println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
-    println!("Max bloom fill rate : {max_bloom_rate}");
-    println!("Median fill rate : {median_bloom_rate}");
-    println!("Average fill rate : {average_bloom_rate}");
+        let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
+        let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
+        let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
+        let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
+        let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
 
-    println!("");
+        println!("Non zero bf amount : {n_z_bloom}");
+        println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
+        println!("Max bloom fill rate : {max_bloom_rate}");
+        println!("Median fill rate : {median_bloom_rate}");
+        println!("Average fill rate : {average_bloom_rate}");
 
-    println!("Non zero ht amount : {n_z_ht}");
-    println!("Non zero ht block rates : {n_z_ht_rate}");
-    println!("Max ht fill rate : {max_ht_rate}");
-    println!("Median ht fill rate : {median_ht_rate}");
-    println!("Average ht fill rate : {average_ht_rate}");
+        println!("");
 
-    println!("");
+        println!("Non zero ht amount : {n_z_ht}");
+        println!("Non zero ht block rates : {n_z_ht_rate}");
+        println!("Max ht fill rate : {max_ht_rate}");
+        println!("Median ht fill rate : {median_ht_rate}");
+        println!("Average ht fill rate : {average_ht_rate}");
+
+        println!("");
+    }
 
     println!("And with all that we get a skip amount of {0}", 
         *hash_table.skip_counter.lock().unwrap());
