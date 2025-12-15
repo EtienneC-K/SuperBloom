@@ -25,6 +25,7 @@ use itertools::Itertools;
 use std::io::BufReader;
 use std::fs::File;
 use std::io::BufRead;
+use std::sync::Mutex;
 
 ///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
@@ -149,14 +150,21 @@ pub fn main() {
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
     let hash_table = CountTable::new(table_size, table_block_size);
 
+    //anti optims variable
+    let kmer_sum: Mutex<u64> = Mutex::new(0);
+
     //now we parse and treat each input method
     if args.input_type == 0 {
         let iter_files = read_fof(filename.to_string());
         iter_files.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
             for line in chunk {
                 let sequence = read_fasta(line.to_string());
-                handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, 
+                let local_kmer_sum =
+                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, 
                     one_to_one, no_bloom, no_hashtable);
+                let mut total_sum = kmer_sum.lock().unwrap();
+                *total_sum = total_sum.wrapping_add(local_kmer_sum);
+                drop(total_sum);
             }
         });
     } else if args.input_type == 1 {
@@ -181,8 +189,12 @@ pub fn main() {
 
                     //with this assumption make a packedseq from the sequence
                     let sequence = PackedSeqVec::from_ascii(line.as_bytes());
-                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
+                    let local_kmer_sum =
+                        handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
                         one_to_one, no_bloom, no_hashtable);
+                    let mut total_sum = kmer_sum.lock().unwrap();
+                    *total_sum = total_sum.wrapping_add(local_kmer_sum);
+                    drop(total_sum);
                 }
             }
         })
@@ -256,6 +268,8 @@ pub fn main() {
     println!("And with all that we get a skip amount of {0}", 
         *hash_table.skip_counter.lock().unwrap());
     println!("");
+    let anti_optim_count = *kmer_sum.lock().unwrap();
+    println!("anti optim count {anti_optim_count}");
     println!("------------------------------------------------------------");
 }
 
@@ -270,7 +284,8 @@ fn handle_sequence(
     one_to_one: bool,
     no_bloom: bool,
     no_hashtable: bool,
-    ) {
+    ) -> u64 {
+    let mut local_kmer_sum: u64 = 0;
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
                                                     = minimizers_x_positions(sequence, k, m);
 
@@ -300,8 +315,8 @@ fn handle_sequence(
         }
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
         if no_bloom {
-            // TODO sum hashes to be sure no optim that bypasses this shit
-            return
+            //prevent optims
+            local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
         } else {
             kmer_number = 
                 handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
@@ -317,8 +332,8 @@ fn handle_sequence(
         hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
     }
     if no_bloom {
-        // TODO no bloom over here as well
-        return
+        //prevent optims
+        local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
     } else {
         let _ = 
             handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
@@ -327,6 +342,9 @@ fn handle_sequence(
             n_hashes, bloom, hash_table, k, hashed_minimizer,
             &all_hashes, kmer_number, no_hashtable);
     }
+
+    //is here only to prevent optimisations in case no bloom filters
+    local_kmer_sum
 }
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
