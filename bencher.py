@@ -16,9 +16,9 @@ def main():
         #for nb_blocks in range(2*minimizer_size-2, 2*minimizer_size+3):
         for nb_blocks in range(2*minimizer_size, 2*minimizer_size+1):
             times = []
-            for _ in range (5): #to get better averages
-                block_size = 37-nb_blocks
-                command = f"\\time ./target/release/bloomybloom -t 16 --input-type 1 -m {minimizer_size} --block-size {block_size} --size 37 target/release/SRR_first_trad.fasta"
+            for _ in range (1): #to get better averages
+                block_size = 27-nb_blocks
+                command = f"\\time ./target/release/bloomybloom -t 16 --input-type 1 -m {minimizer_size} --block-size {block_size} --size 27 --table-size 25 target/release/bob.fasta"
                 start = perf_counter()
                 os.system(command)
                 execution_time = perf_counter()-start

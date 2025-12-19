@@ -188,17 +188,18 @@ pub fn main() {
                 //    && line.as_bytes()[0] != b'>' 
                 //    && line.as_bytes()[0] != b'@' {
 
-                    // /!\/!\ assuming single line writing, so that each line corresponds to a
-                    // sequence
+                // /!\/!\ assuming single line writing, so that each line corresponds to a
+                // sequence
 
-                    //with this assumption make a packedseq from the sequence
-                    let sequence = PackedSeqVec::from_ascii(&line);
-                    let local_kmer_sum =
-                        handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
-                        one_to_one, no_bloom, no_hashtable);
-                    let mut total_sum = kmer_sum.lock().unwrap();
-                    *total_sum = total_sum.wrapping_add(local_kmer_sum);
-                    drop(total_sum);
+                //with this assumption make a packedseq from the sequence
+                let sequence = PackedSeqVec::from_ascii(&line);
+                //println!("{:?}", line);
+                let local_kmer_sum =
+                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
+                    one_to_one, no_bloom, no_hashtable);
+                let mut total_sum = kmer_sum.lock().unwrap();
+                *total_sum = total_sum.wrapping_add(local_kmer_sum);
+                drop(total_sum);
             }
         })
 

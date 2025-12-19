@@ -94,9 +94,19 @@ impl Iterator for Hell {
     type Item = Vec<Vec<u8>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.fxreader.next()?;
-        let seq_red = result.unwrap().seq().to_mut().clone();
-        let singleton_chunk = vec![seq_red];
-        return Some(singleton_chunk);
+        let mut chunk = Vec::new();
+        for _ in 0..self.chunk_size {
+            if let result = self.fxreader.next()? {
+                let seq_red = result.unwrap().seq().to_mut().clone();
+                chunk.push(seq_red);
+            } else {
+                break;
+            }
+        }
+        if chunk.is_empty() {
+            None
+        } else {
+            return Some(chunk);
+        }
     }
 }
