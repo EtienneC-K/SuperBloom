@@ -7,6 +7,9 @@ use std::path::Path;
 //use std::str;
 use packed_seq::{PackedSeqVec, SeqVec};
 //use bitvec::prelude::*;
+use needletail::FastxReader;
+use needletail::parser::SequenceRecord;
+use needletail::errors::ParseError;
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
 pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
@@ -53,32 +56,47 @@ where P: AsRef<Path>, {
     Ok(io::BufReader::new(file).lines())
 }
 
-pub struct FastaReader<I> {
-    pub lines: I,
+//pub struct FastaReader<T: FastxReader> {
+//    pub lines: T,
+//    pub chunk_size: usize,
+//}
+//
+//impl<'a, T> Iterator for FastaReader<T> {
+//        type Item<'b> = Vec<Option<Result<SequenceRecord<'b>, ParseError>>>;
+//
+//        fn next(&mut self) -> Option<Self::Item> {
+//            let mut chunk = Vec::with_capacity(self.chunk_size);
+//            for _ in 0..self.chunk_size {
+//                if let Some(line) = self.lines.next() {
+//                    match line {
+//                        Ok(content) => chunk.push(line),
+//                        Err(_) => break,
+//                    }
+//                } else {
+//                    break;
+//                }
+//            }
+//            if chunk.is_empty() {
+//                None
+//            } else {
+//                Some(chunk)
+//            }
+//        }
+//}
+
+/// I never hated a struct more than an Iterator with lifetimes, worst invention in Mankind history
+pub struct Hell {
+    pub fxreader: Box<dyn FastxReader>,
     pub chunk_size: usize,
 }
 
-impl<I> Iterator for FastaReader<I>
-where 
-    I: Iterator<Item = io::Result<String>>,{
-        type Item = Vec<String>;
+impl Iterator for Hell {
+    type Item = Vec<Vec<u8>>;
 
-        fn next(&mut self) -> Option<Self::Item> {
-            let mut chunk = Vec::with_capacity(self.chunk_size);
-            for _ in 0..self.chunk_size {
-                if let Some(line) = self.lines.next() {
-                    match line {
-                        Ok(content) => chunk.push(content),
-                        Err(_) => break,
-                    }
-                } else {
-                    break;
-                }
-            }
-            if chunk.is_empty() {
-                None
-            } else {
-                Some(chunk)
-            }
-        }
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.fxreader.next()?;
+        let seq_red = result.unwrap().seq().to_mut().clone();
+        let singleton_chunk = vec![seq_red];
+        return Some(singleton_chunk);
+    }
 }

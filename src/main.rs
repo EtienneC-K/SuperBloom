@@ -9,7 +9,7 @@ mod utils;
 mod counter;
 mod output;
 
-use input::{read_fof, read_fasta, read_lines, FastaReader};
+use input::{read_fof, read_fasta, read_lines, Hell};
 use minimizers::minimizers_x_positions;
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
@@ -26,6 +26,7 @@ use std::io::BufReader;
 use std::fs::File;
 use std::io::BufRead;
 use std::sync::Mutex;
+use needletail::parse_fastx_file;
 
 ///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
@@ -168,34 +169,36 @@ pub fn main() {
             }
         });
     } else if args.input_type == 1 {
-        let file = File::open(filename).unwrap();
-        let reader = BufReader::new(file);
-        let lines = reader.lines();
+        //let file = File::open(filename).unwrap();
+        //let reader = BufReader::new(file);
+        //let lines = reader.lines();
+        let mut reader = parse_fastx_file(&filename).expect("valid path/file");
+    
 
-        let chunked_lines = FastaReader {
-            lines,
+        let chunked_lines = Hell {
+            fxreader : reader,
             chunk_size : sequential_fallback,
         };
 
         chunked_lines.par_bridge().for_each(|chunk| {
+        //reader.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
             for line in chunk {
                 //let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
-                if line.len() > k as usize 
-                    && line.as_bytes()[0] != b'>' 
-                    && line.as_bytes()[0] != b'@' {
+                //if line.len() > k as usize 
+                //    && line.as_bytes()[0] != b'>' 
+                //    && line.as_bytes()[0] != b'@' {
 
                     // /!\/!\ assuming single line writing, so that each line corresponds to a
                     // sequence
 
                     //with this assumption make a packedseq from the sequence
-                    let sequence = PackedSeqVec::from_ascii(line.as_bytes());
+                    let sequence = PackedSeqVec::from_ascii(&line);
                     let local_kmer_sum =
                         handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
                         one_to_one, no_bloom, no_hashtable);
                     let mut total_sum = kmer_sum.lock().unwrap();
                     *total_sum = total_sum.wrapping_add(local_kmer_sum);
                     drop(total_sum);
-                }
             }
         })
 
