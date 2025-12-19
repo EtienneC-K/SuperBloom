@@ -289,6 +289,9 @@ fn handle_sequence(
     no_bloom: bool,
     no_hashtable: bool,
     ) -> u64 {
+    if sequence.len() <= k as usize {
+        return 0;
+    }
     let mut local_kmer_sum: u64 = 0;
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
                                                     = minimizers_x_positions(sequence, k, m);
