@@ -110,3 +110,9 @@ impl Iterator for Hell {
         }
     }
 }
+
+pub struct ExtraHell {
+    pub fxreader: Box<dyn FastxReader>,
+    pub chunk_size: usize,
+}
+
