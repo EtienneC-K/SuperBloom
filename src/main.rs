@@ -15,7 +15,7 @@ use minimizers::minimizers_x_positions;
 use bloom::BloomFilter;
 use counter::{CountTable};
 use utils::{xorshift_u64};
-use output::write_output;
+use output::{write_output};
 use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
@@ -97,6 +97,10 @@ struct Args {
     ///to disable all code referring to the bloom filter, enables no_hashtable
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     no_bloom: bool,
+
+    ///to change the standard output to just sequence of numbers to be read by a benchmark programm
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    auto_bench: bool,
 
 }
 
@@ -224,57 +228,72 @@ pub fn main() {
     //println!("Remplissage du bloom {taux_bloom} ce qui représente une proportion de {proportion_bloom}");
     //println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
 
-    println!("------------------------------------------------------------");
-    println!("");
-    println!("Parameters : ");
-    println!("k : {k}, m: {m}");
-    println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
-    println!("ht size : {table_size}, block size {table_block_size}, nb_blocks {0}", table_size/table_block_size);
-    println!("sequetial fallback : {sequential_fallback}");
- 
-    println!("");
- 
-    if args.counting {
-
-        if !no_bloom {
-            let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
-            let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
-            let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
-            let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
-            let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-
-            println!("Non zero bf amount : {n_z_bloom}");
-            println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
-            println!("Max bloom fill rate : {max_bloom_rate}");
-            println!("Median fill rate : {median_bloom_rate}");
-            println!("Average fill rate : {average_bloom_rate}");
-        }
-
-        println!("");
-
-        if !no_hashtable {
-            let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
-            let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
-            let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
-            let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
-            let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
-
-            println!("Non zero ht amount : {n_z_ht}");
-            println!("Non zero ht block rates : {n_z_ht_rate}");
-            println!("Max ht fill rate : {max_ht_rate}");
-            println!("Median ht fill rate : {median_ht_rate}");
-            println!("Average ht fill rate : {average_ht_rate}");
-        }
-
-        println!("");
+    //printing only a line for the benchmark evaluating programm if option --auto-bench if on
+    if args.auto_bench {
+        write_auto_bench_stdout(
+            no_bloom, 
+            no_hashtable,
+            bloom,
+            hash_table,
+            nb_blocks,
+            block_size,
+            table_size,
+            table_block_size,
+            )
     }
+    else {
+        println!("------------------------------------------------------------");
+        println!("");
+        println!("Parameters : ");
+        println!("k : {k}, m: {m}");
+        println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
+        println!("ht size : {table_size}, block size {table_block_size}, nb_blocks {0}", table_size/table_block_size);
+        println!("sequetial fallback : {sequential_fallback}");
+ 
+        println!("");
+ 
+        if args.counting {
 
-    println!("And with all that we get a skip amount of {0}", 
-        *hash_table.skip_counter.lock().unwrap());
-    println!("");
-    let anti_optim_count = *kmer_sum.lock().unwrap();
-    println!("anti optim count {anti_optim_count}");
-    println!("------------------------------------------------------------");
+            if !no_bloom {
+                let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+                let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
+                let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
+                let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
+                let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
+
+                println!("Non zero bf amount : {n_z_bloom}");
+                println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
+                println!("Max bloom fill rate : {max_bloom_rate}");
+                println!("Median fill rate : {median_bloom_rate}");
+                println!("Average fill rate : {average_bloom_rate}");
+            }
+
+            println!("");
+
+            if !no_hashtable {
+                let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
+                let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
+                let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
+                let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
+                let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
+
+                println!("Non zero ht amount : {n_z_ht}");
+                println!("Non zero ht block rates : {n_z_ht_rate}");
+                println!("Max ht fill rate : {max_ht_rate}");
+                println!("Median ht fill rate : {median_ht_rate}");
+                println!("Average ht fill rate : {average_ht_rate}");
+            }
+
+            println!("");
+        }
+
+        println!("And with all that we get a skip amount of {0}", 
+            *hash_table.skip_counter.lock().unwrap());
+        println!("");
+        let anti_optim_count = *kmer_sum.lock().unwrap();
+        println!("anti optim count {anti_optim_count}");
+        println!("------------------------------------------------------------");
+    }
 }
 
 fn handle_sequence(
@@ -377,4 +396,47 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         kmer_number+=1;
     }
     kmer_number
+}
+
+///output function that requires local modules and is therefore written here
+fn write_auto_bench_stdout(
+    no_bloom : bool, 
+    no_hashtable : bool,
+    bloom: BloomFilter,
+    hash_table: CountTable,
+    nb_blocks: usize,
+    block_size: usize,
+    table_size: usize,
+    table_block_size: usize,
+    ) {
+    let mut print_string = String::new();
+    //writes every number looked for by the benchmark programm in a single line
+    //also does all the counting
+    if !no_bloom {
+        let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+        let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
+        let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
+        let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
+        let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
+
+        print_string = 
+            format!("{n_z_bloom_rate}|{max_bloom_rate}|{average_bloom_rate}|{median_bloom_rate}");
+    } else {
+        print_string = format!("0|0|0|0");
+    }
+
+    if !no_hashtable {
+        let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
+        let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
+        let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
+        let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
+        let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
+
+        print_string +=
+            &format!("|{n_z_ht_rate}|{max_ht_rate}|{average_ht_rate}|{median_ht_rate}");
+    } else {
+        print_string += "|0|0|0|0";
+    }
+
+    println!("{print_string}");
 }

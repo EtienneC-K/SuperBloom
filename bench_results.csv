@@ -1,0 +1,12 @@
+Source file name : SRR_trad.fasta
+"threads : 6, available RAM : 12GB"
+
+
+,wall clock,user time,system time,%CPU,,major page faults,minor page faults,swaps
+KMC,died
+Gerbil,0m04.33,24.09,2.16,605,,0,198278,0
+####################################################################################################
+Bloomybloom
+,wall_clock,user time,system time,%CPU,,major page faults,minor page faults,swaps,,non zero block rate,max block fill,average fill,median fill,,hash table non zeros,max block fill,average fillmedian fill
+"minimizer_size : 11, size 8589934592, block-size : 16384, nb-blocks524288, ht-size : 268435456, ht-block-size : 16384, nb-ht_blocks : 16384, no_hashtable : False, no_bloom : False"
+,0m47.86,274.82,1.37,577,,0,878677,0,,0.5144,0.9998,0.0429,0.0177,,1,0.9532,0.0393,0.0358

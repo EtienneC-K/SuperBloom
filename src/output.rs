@@ -1,5 +1,6 @@
 ///module responsible for writing the output to a csv file
 
+
 use csv::Writer;
 use std::error::Error;
 
