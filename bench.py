@@ -3,6 +3,7 @@
 from sys import argv
 import csv
 import subprocess
+import math
 
 #function that launches all the tests and writes in the output file
 def main():
@@ -90,7 +91,7 @@ def run_kmc(input_file, threads):
     #TODO : i'll also have to run the ram only kmc sometime
     executable_path = "./KMC3.2.4.linux.x64/bin/kmc"
     completed_run = None
-    command = f"\\time {executable_path} {input_file} results/31mers temps -t {threads}"
+    command = f"\\time {executable_path} -fa -t{threads} {input_file} results/31mers temps"
     try :
         completed_run = subprocess.run(command, shell = True, capture_output = True)
     except Exception as e :
@@ -106,7 +107,8 @@ def run_kmc(input_file, threads):
         return ["KMC", "died"]
 
     print("Run data de KMC :")
-    print(completed_run.stderr)
+    print(completed_run.stderr.splitlines()[-2])
+    print(completed_run.stderr.splitlines()[-1])
     print("#######################")
 
     run_data = parse_backslash_time(completed_run.stderr)
@@ -187,20 +189,25 @@ def parse_backslash_time(output: str):
         minor page faults,
         swaps,
     """
+    #take the 2 last lines to dodge any stderr by the run programm and only get the one from time
+    all_lines = output.splitlines()
+    line_1 = all_lines[-2]
+    line_2 = all_lines[-1]
     #first split everything
-    splited = output.split()
+    splited_1 = line_1.split()
+    splited_2 = line_2.split()
 
     #then extract string containing the time stamps and such
-    wall_clock = splited[2].decode("utf-8").replace("elapsed", "")
+    wall_clock = splited_1[2].decode("utf-8").replace("elapsed", "")
     wall_clock = wall_clock.replace(":", "m") #because can auto format to a date otherwise
     #y'aura ptet un probleme la dedans si j'ai des tests qui depasse les 1h
-    user = splited[0].decode("utf-8").replace("user", "")
-    system = splited[1].decode("utf-8").replace("system", "")
-    cpu = splited[3].decode("utf-8").replace("%CPU", "")
-    swaps = splited[8].decode("utf-8").replace("swaps", "")
+    user = splited_1[0].decode("utf-8").replace("user", "")
+    system = splited_1[1].decode("utf-8").replace("system", "")
+    cpu = splited_1[3].decode("utf-8").replace("%CPU", "")
+    swaps = splited_2[2].decode("utf-8").replace("swaps", "")
 
     #pagefualts need a bit more work to parse
-    pagefaults=splited[7].decode("utf-8").replace("(", "").split("+")
+    pagefaults=splited_2[1].decode("utf-8").replace("(", "").split("+")
     major = pagefaults[0].replace("major", "")
     minor = pagefaults[1].replace("minor)pagefaults", "")
 
@@ -245,6 +252,33 @@ def launch_bloomys(data, input_file, threads, max_ram):
     n_hashes = 7
 
     #no_options default values
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+    #######
+
+    #test with 2048 blocks
+    ht_block_size = ht_size - 11
+    block_size = size - 11
+    #
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+    #######
+
+    #set sizes to ram maxxing sizes
+    ht_size = math.floor(math.log2(max_ram*8*(10**9))-6-math.log2(3)) #calculations for this formula : trust me
+    size = ht_size + 6
+    #for now just print to check its not through the roof
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+
+
+    #many blocks while maxxing ram (128minimizers/block)
+    block_size = size-18
+    ht_block_size = ht_size-18
+    #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
@@ -305,17 +339,33 @@ def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, min
     important note : this writes all sizes fully, but the given variables are powers of 2
     """
     
-    return_text = f"minimizer_size : {minimizer_size}"
-    return_text += f", size {2**size}"
-    return_text += f", block-size : {2**block_size}"
-    return_text += f", nb-blocks{2**(size-block_size)}"
-    return_text += f", ht-size : {2**ht_size}"
-    return_text += f", ht-block-size : {2**ht_block_size}"
-    return_text += f", nb-ht_blocks : {2**(ht_size-ht_block_size)}"
+    return_text = f"minimizer_size : {write_spaced_digits(minimizer_size)}"
+    return_text += f", size {write_spaced_digits(2**size)}"
+    return_text += f", block-size : {write_spaced_digits(2**block_size)}"
+    return_text += f", nb-blocks : {write_spaced_digits(2**(size-block_size))}"
+    return_text += f", ht-size : {write_spaced_digits(2**ht_size)}"
+    return_text += f", ht-block-size : {write_spaced_digits(2**ht_block_size)}"
+    return_text += f", nb-ht_blocks : {write_spaced_digits(2**(ht_size-ht_block_size))}"
     return_text += f", no_hashtable : {no_ht}"
     return_text += f", no_bloom : {no_bloom}"
 
     return ([return_text])
+
+
+def write_spaced_digits(n: int):
+    """takes an integer and returns a string with spaces every 3 digit for better readability"""
+    n_str = str(n)
+
+    for i in range(len(n_str)-3, 0, -3):
+        n_str = insert_char(n_str, " ", i)
+
+    return n_str
+
+
+def insert_char(s, c, index):
+    """insert a character c at index index in string s"""
+    return s[:index] + c + s[index:]
+
 
 
 def parse_counted(count_output):

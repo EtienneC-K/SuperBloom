@@ -3,10 +3,14 @@ Source file name : SRR_trad.fasta
 
 
 ,wall clock,user time,system time,%CPU,,major page faults,minor page faults,swaps
-KMC,died
-Gerbil,0m04.33,24.09,2.16,605,,0,198278,0
+KMC,0m06.55,30.40,2.96,509,,0,1448562,0
+Gerbil,0m04.25,24.02,2.08,613,,0,199720,0
 ####################################################################################################
 Bloomybloom
 ,wall_clock,user time,system time,%CPU,,major page faults,minor page faults,swaps,,non zero block rate,max block fill,average fill,median fill,,hash table non zeros,max block fill,average fillmedian fill
-"minimizer_size : 11, size 8589934592, block-size : 16384, nb-blocks524288, ht-size : 268435456, ht-block-size : 16384, nb-ht_blocks : 16384, no_hashtable : False, no_bloom : False"
-,0m47.86,274.82,1.37,577,,0,878677,0,,0.5144,0.9998,0.0429,0.0177,,1,0.9532,0.0393,0.0358
+"minimizer_size : 11, size 858 993 4592, block-size : 1 6384, nb-blocks : 52 4288, ht-size : 26 843 5456, ht-block-size : 1 6384, nb-ht_blocks : 1 6384, no_hashtable : False, no_bloom : False"
+,0m48.91,279.50,1.63,574,,0,878679,0,,0.5144,0.9998,0.0429,0.0177,,1,0.9533,0.0393,0.0358
+"minimizer_size : 11, size 858 993 4592, block-size : 419 4304, nb-blocks : 2048, ht-size : 26 843 5456, ht-block-size : 13 1072, nb-ht_blocks : 2048, no_hashtable : False, no_bloom : False"
+,1m02.46,361.85,2.41,583,,0,1053589,0,,1,0.0588,0.0237,0.0233,,1,0.0785,0.0392,0.0386
+"minimizer_size : 11, size 1 717 986 9184, block-size : 419 4304, nb-blocks : 4096, ht-size : 26 843 5456, ht-block-size : 13 1072, nb-ht_blocks : 2048, no_hashtable : False, no_bloom : False"
+"minimizer_size : 11, size 1 717 986 9184, block-size : 6 5536, nb-blocks : 26 2144, ht-size : 26 843 5456, ht-block-size : 1024, nb-ht_blocks : 26 2144, no_hashtable : False, no_bloom : False"
