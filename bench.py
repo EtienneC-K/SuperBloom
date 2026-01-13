@@ -322,7 +322,6 @@ def launch_and_collect(input_file, options):
     #we check the accuracy after the normal run, by comparing the results to gerbils histogram
     accuracy, skips = check_accuracy() #no arguments since output files paths are constant
     accuracy = str(100-accuracy) + "%" #formatting it before writting
-    print(f"amount of skips {skips}")
 
     #now for the counting version
     options += " --counting --auto-bench"
