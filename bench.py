@@ -106,9 +106,6 @@ def run_kmc(input_file, threads):
         print(completed_run.stderr.decode("utf-8"))
         return ["KMC", "died"]
 
-    print("Run data de KMC :")
-    print(completed_run.stderr.splitlines()[-2])
-    print(completed_run.stderr.splitlines()[-1])
     print("#######################")
 
     run_data = parse_backslash_time(completed_run.stderr)
@@ -124,7 +121,7 @@ def run_gerbil(input_file, threads, max_ram):
     #runs gerbil, with 31mers, restricts max ram in GB
     executable_path = "./gerbil/build/gerbil"
     completed_run = None
-    command = f"\\time {executable_path} {input_file} -k 31 -t {threads} -e {max_ram}GB temps/ results/gerbil_res"
+    command = f"\\time {executable_path} -k 31 -t {threads} -e {max_ram}GB -x h {input_file} temps/ results/gerbil_res"
 
     try :
         completed_run = subprocess.run(command, shell = True, capture_output = True)
@@ -171,8 +168,11 @@ def write_transitional_header(data):
         "",
         "hash table non zeros",
         "max block fill",
-        "average fill"
-        "median fill"
+        "average fill",
+        "median fill",
+        "",
+        "accuracy",
+        "skips"
     ]
     data.append(header_columns)
 
@@ -319,6 +319,11 @@ def launch_and_collect(input_file, options):
         print(e)
         timed_results = ["Failed"]*8
 
+    #we check the accuracy after the normal run, by comparing the results to gerbils histogram
+    accuracy, skips = check_accuracy() #no arguments since output files paths are constant
+    accuracy = str(100-accuracy) + "%" #formatting it before writting
+    print(f"amount of skips {skips}")
+
     #now for the counting version
     options += " --counting --auto-bench"
     command = f"{executable_path} {options} {input_file}"
@@ -330,7 +335,9 @@ def launch_and_collect(input_file, options):
         print(e)
         counted_results = ["Failed"]*8
 
-    return (timed_results+counted_results)
+
+
+    return (timed_results+counted_results + ["", str(accuracy), skips])
 
 
 def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size):
@@ -387,7 +394,74 @@ def parse_counted(count_output):
     return return_list
 
 
+def check_accuracy():
+    """compares the value of each histogram (gerbil and bloomy), and gives a percentage (rounded to the 10th)
+    that corresponds to bloomybloom's accuracy
+    second element of the tuple is the amount of skips bloomy bloom performed"""
 
+    gerbil_results = read_gerbil_histo() #from 1 to 254, all others aggregated on 255, watch out for undefined ones
+    bloomy_results, skips = read_bloomy_hitso()
+
+    total_kmers = 0
+    offset = 0 #counts the sum of offsets between gerbils and bloomys results
+    for i in range (252):
+        total_kmers += gerbil_results[i]
+        offset += abs(gerbil_results[i]-bloomy_results[i])
+
+    accuracy = round(offset/total_kmers, 1)
+
+    return (accuracy, "_"+write_spaced_digits(skips)) #adding underscore to combat auto formats
+
+
+def read_gerbil_histo():
+    """reads the csv histogram from gerbil"""
+    value_list = []
+    with open ("temps/histogram.csv") as file :
+        csv_file = csv.reader(file)
+
+        csv_lines = []
+        for line in csv_file:
+            csv_lines.append(line)
+
+        for i in range (4, 255):
+            cell_value = 0
+            try :
+                cell_value = csv_lines[i][0].split(";")[1]
+            except IndexError :
+                cell_value = 0
+            value_list.append(cell_value)
+        
+        #then aggregate everything that has a higher count together, like bloomy
+        sum_high_counts = 0
+        for i in range(255, len(csv_lines)):
+            sum_high_counts += int(csv_lines[i][0].split(";")[1])
+        value_list.append(sum_high_counts)
+
+    for (i, value) in enumerate(value_list):
+        value_list[i] = int(value)
+
+    return value_list
+
+
+def read_bloomy_hitso():
+    """reads the csv histogram from bloomybloom"""
+    value_list = []
+    with open ("output.csv") as file :
+        csv_file = csv.reader(file)
+
+        csv_lines = []
+        for line in csv_file:
+            csv_lines.append(line)
+
+        for i in range(4, 256):
+            value_list.append(csv_lines[1][i])
+
+    skips = csv_lines[1][256]
+
+    for (i, value) in enumerate(value_list):
+        value_list[i] = int(value)
+
+    return (value_list, int(skips))
 
 if __name__ == "__main__":
     main()
