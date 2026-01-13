@@ -4,3 +4,4 @@ bencher.py
 /gerbil/build
 /results
 bench_results.csv
+*.csv
