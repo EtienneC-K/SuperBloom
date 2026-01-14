@@ -257,7 +257,16 @@ def launch_bloomys(data, input_file, threads, max_ram):
     print("Finished a bloomybloom option set")
     #######
 
+    #test with a single hash
+    n_hashes = 1
+    #
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+    #######
+
     #test with 2048 blocks
+    n_hashes = 7
     ht_block_size = ht_size - 11
     block_size = size - 11
     #
@@ -278,6 +287,37 @@ def launch_bloomys(data, input_file, threads, max_ram):
     #many blocks while maxxing ram (128minimizers/block)
     block_size = size-18
     ht_block_size = ht_size-18
+    #
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+
+    #default values, different stages of execution
+    size = 33
+    block_size = 14
+    ht_size = 28
+    ht_block_size = 14
+    no_ht = False
+    no_bloom = False
+    minimizer_size = 11
+    n_hashes = 7
+
+    #no hash table
+    no_ht = True
+    #
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+
+    #no bloom
+    no_bloom = True
+    #
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+
+    #only one hash
+    n_hashes = 1
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
