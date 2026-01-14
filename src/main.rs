@@ -74,6 +74,7 @@ struct Args {
     ///input method, can be 0 for a file of file directing to single fastas, or 1 for a single
     ///multi_fasta (in which case we assume very hard that lines' lenghts do not cap a 80, but at the 
     ///reads' lengths)
+    ///dev note: input_type 0 is way behind in commits, do not use
     #[arg(long, default_value_t = 0)]
     input_type: u8,
 
@@ -98,6 +99,10 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     no_bloom: bool,
 
+    ///to disable all code after the parsing part, for bench purposes
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    only_parse: bool,
+
     ///to change the standard output to just sequence of numbers to be read by a benchmark programm
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     auto_bench: bool,
@@ -121,8 +126,9 @@ pub fn main() {
     let mut table_block_size: usize = 1<<args.table_block_size;
     let one_to_one: bool = args.one_to_one;
     let sequential_fallback: usize = args.sequential_fallback;
-    let no_bloom: bool = args.no_bloom;
-    let no_hashtable: bool = args.no_bloom || args.no_hashtable;
+    let only_parse: bool = args.only_parse;
+    let no_bloom: bool = args.no_bloom || args.only_parse;
+    let no_hashtable: bool = args.no_hashtable || args.no_bloom || args.only_parse;
 
     //for the special case where i want to map 
     if one_to_one {
@@ -186,23 +192,36 @@ pub fn main() {
 
         chunked_lines.par_bridge().for_each(|chunk| {
         //reader.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
+            let mut block_lines_counter: usize = 0;
             for line in chunk {
                 //let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
                 //if line.len() > k as usize 
                 //    && line.as_bytes()[0] != b'>' 
                 //    && line.as_bytes()[0] != b'@' {
-
                 // /!\/!\ assuming single line writing, so that each line corresponds to a
                 // sequence
-
                 //with this assumption make a packedseq from the sequence
                 let sequence = PackedSeqVec::from_ascii(&line);
-                //println!("{:?}", line);
-                let local_kmer_sum =
-                    handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
-                    one_to_one, no_bloom, no_hashtable);
+
+                
+                if only_parse {
+                    block_lines_counter += sequence.len();
+                } else {
+                    //println!("{:?}", line);
+                    let local_kmer_sum =
+                        handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
+                        one_to_one, no_bloom, no_hashtable);
+                    if !no_bloom {
+                        let mut total_sum = kmer_sum.lock().unwrap();
+                        *total_sum = total_sum.wrapping_add(local_kmer_sum);
+                        drop(total_sum);
+                    }
+                }
+
+            }
+            if only_parse {
                 let mut total_sum = kmer_sum.lock().unwrap();
-                *total_sum = total_sum.wrapping_add(local_kmer_sum);
+                *total_sum = total_sum.wrapping_add(block_lines_counter as u64);
                 drop(total_sum);
             }
         })
@@ -210,6 +229,13 @@ pub fn main() {
     } else {
         panic!("Unrecognized input type, must be 0 or 1");
     }
+    
+    //to prevent optims
+    if only_parse {
+        let total_counter = kmer_sum.lock().unwrap();
+        print!("Antim optim counter {total_counter}");
+    }
+
 
     //for fasta_name in iter_files {
     //    let sequence = read_fasta(fasta_name);

@@ -252,11 +252,12 @@ def launch_bloomys(data, input_file, threads, max_ram):
     ht_block_size = 14
     no_ht = False
     no_bloom = False
+    only_parse = False
     minimizer_size = 11
     n_hashes = 7
 
     #no_options default values
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
     #######
@@ -264,7 +265,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     #test with a single hash
     n_hashes = 1
     #
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
     #######
@@ -274,7 +275,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     ht_block_size = ht_size - 11
     block_size = size - 11
     #
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
     #######
@@ -283,7 +284,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     ht_size = math.floor(math.log2(max_ram*8*(10**9))-6-math.log2(3)) #calculations for this formula : trust me
     size = ht_size + 6
     #for now just print to check its not through the roof
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
@@ -292,7 +293,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     block_size = size-18
     ht_block_size = ht_size-18
     #
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
@@ -303,43 +304,57 @@ def launch_bloomys(data, input_file, threads, max_ram):
     ht_block_size = 14
     no_ht = False
     no_bloom = False
+    only_parse = False
     minimizer_size = 11
     n_hashes = 7
 
     #no hash table
     no_ht = True
     #
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
     #no bloom
     no_bloom = True
     #
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
+    data.append(launch_and_collect(input_file, options))
+    print("Finished a bloomybloom option set")
+
+    #only parsing
+    only_parse = True
+    #
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
     #only one hash
     n_hashes = 1
+    only_parse = False
     #
-    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes)
+    data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
+
+
 
     #dotn forget the return
     return (data)
 
 
-def update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size, n_hashes):
+def update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes):
     """updates the options and data variable with all the specified options values"""
     options = f"-t {threads} --input-type 1 --size {size} --block-size {block_size} --table-size {ht_size} --table-block-size {ht_block_size}"
-    if no_bloom:
+    if only_parse:
+        options += " --only-parse"
+    elif no_bloom:
         options += " --no-bloom"
     elif no_ht:
         options += " --no-hashtable"
+    
 
-    data.append(write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size))
+    data.append(write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size))
 
     return (data, options)
 
@@ -383,7 +398,7 @@ def launch_and_collect(input_file, options):
     return (timed_results+counted_results + ["", str(accuracy), skips])
 
 
-def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, minimizer_size):
+def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size):
     """
     function to write a human readable string with all options, this string will be appended to data
     important note : this writes all sizes fully, but the given variables are powers of 2
@@ -398,6 +413,7 @@ def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, min
     return_text += f", nb-ht_blocks : {write_spaced_digits(2**(ht_size-ht_block_size))}"
     return_text += f", no_hashtable : {no_ht}"
     return_text += f", no_bloom : {no_bloom}"
+    return_text += f", only_parse : {only_parse}"
 
     return ([return_text])
 
