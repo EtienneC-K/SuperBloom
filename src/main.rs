@@ -14,7 +14,7 @@ use minimizers::minimizers_x_positions;
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
 use counter::{CountTable};
-use utils::{xorshift_u64};
+use utils::{xorshift_u64, xorshift_u32};
 use output::{write_output};
 use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
@@ -326,10 +326,6 @@ fn handle_sequence(
 
     let mut kmer_number: usize = 0;
     //compute all hashes at once to g faster than computing them 1 by 1
-    let mut all_hashes: Vec<Vec<u32>> = Vec::new();
-    for i in 0..bloom.hashers.len() {
-        all_hashes.push(bloom.hashers[i].hash_kmers_simd(sequence.as_slice(), 1).collect());
-    }
     for i in 0..super_kmers_positions.len()-1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
@@ -346,7 +342,7 @@ fn handle_sequence(
         } else {
             kmer_number = 
                 handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-                n_hashes, bloom, hash_table, k, hashed_minimizer, &all_hashes, kmer_number,
+                n_hashes, bloom, hash_table, k, hashed_minimizer, kmer_number,
                 no_hashtable);
         }
     }
@@ -366,7 +362,7 @@ fn handle_sequence(
             (sequence.len()-1-k as usize) as u32,
             &sequence, 
             n_hashes, bloom, hash_table, k, hashed_minimizer,
-            &all_hashes, kmer_number, no_hashtable);
+            kmer_number, no_hashtable);
     }
 
     //is here only to prevent optimisations in case no bloom filters
@@ -375,20 +371,22 @@ fn handle_sequence(
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
     bloom: &BloomFilter, hash_table: &CountTable, k: u16, hashed_minimizer: u64, 
-    all_hashes: &Vec<Vec<u32>>, mut kmer_number: usize, no_hashtable: bool) -> usize {
+    mut kmer_number: usize, no_hashtable: bool) -> usize {
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        let mut kmer_s_hashes: Vec<u32> = Vec::new();
+        let mut kmer_s_hashes: Vec<u64> = Vec::new();
+        let mut last_hash: u64 = xorshift_u64(kmer.as_u64());
 
-        for i2 in 0..n_hashes {
-            kmer_s_hashes.push(all_hashes[i2][kmer_number]);
+        for i in 0..bloom.n_hashes-1 {
+            last_hash = xorshift_u64(last_hash);
+            kmer_s_hashes.push(last_hash);
         }
 
+        let kmer_hash: u64 = kmer_s_hashes[0]; //in case we need a copy of it for insertion
         let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
         if already_in && !no_hashtable {
-            let kmer_hash = all_hashes[0][kmer_number];
             //let bitvec_kmer: BitVec = convert_seqkmer(kmer);
             //we take the first hash for the hash table as it seem to not rlly matter
             hash_table.insert(kmer.as_u64(), kmer_hash, hashed_minimizer);

@@ -47,7 +47,7 @@ impl CountTable {
     ///checks if the kmer is already inserted, or inserts it if its not, and then increments
     ///its counter, if after max_retries there is still no place that was found for the kmer
     ///we increment the skip_counter instead
-    pub fn insert(&self, kmer: u64, hashed_kmer: u32, hashed_minimizer: u64) {
+    pub fn insert(&self, kmer: u64, hashed_kmer: u64, hashed_minimizer: u64) {
         let mut inserted: bool = false;
         let mut i: usize = 0;
         let block_address = hashed_minimizer as usize % self.ht_nb_blocks;

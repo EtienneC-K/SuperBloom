@@ -7,15 +7,12 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::prelude::ParallelSliceMut;
 use std::ops::Deref;
 
-//size of blocks, for now constants to fit a rather small L2 cache for labtops used in 2025
-//pub const BLOCK_SIZE: usize = 1<<14; //2 097 152
-//pub const NB_BLOCKS: usize = 1<<19; //16 384 for now, will see later to make it varaible
-
 pub struct BloomFilter {
     pub filter: Vec<Mutex<Vec<BitVec>>>,
-    pub hashers: Vec<NtHasher>, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
+    pub hasher: NtHasher, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
     block_size: usize,
     nb_blocks: usize,
+    pub n_hashes: usize,
 }
 
 impl BloomFilter {
@@ -31,13 +28,11 @@ impl BloomFilter {
                                         size/(block_size*magic_mutex_amount)]));
         }
         Self {
-            //size,
-            //n_hashes,
-            //filter: vec![Mutex::new(BitVec::from_elem(BLOCK_SIZE, false)); size/BLOCK_SIZE],
             filter: filter,
-            hashers: init_hashers(n_hashes, seed, k),
+            hasher: init_hasher(n_hashes, seed, k),
             block_size,
             nb_blocks,
+            n_hashes,
         }
     }
 
@@ -48,7 +43,7 @@ impl BloomFilter {
 
     ///checks if the kmer with specified minimizer hash, and multiple hashes is
     ///inside the bloom filter, inserts it if needed
-    pub fn check_and_insert(&self, hashed_minimizer: u64, kmer_s_hashes: Vec<u32>) -> bool {
+    pub fn check_and_insert(&self, hashed_minimizer: u64, kmer_s_hashes: Vec<u64>) -> bool {
         let mut present: bool = true;
         let blocknum: usize = (hashed_minimizer as usize)%1024;
         let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
@@ -124,12 +119,9 @@ impl BloomFilter {
 
 
 ///to get the NtHasher hasher's when creating the bloomfilter
-fn init_hashers(n_hashes : usize, seed: u32, k: usize) -> Vec<NtHasher> {
+fn init_hasher(n_hashes : usize, seed: u32, k: usize) -> NtHasher {
     let mut hasher_vec: Vec<NtHasher> = Vec::new();
     //we build hashers with slightly spaced seeds
-    for i in 0..n_hashes {
-        let hasher = <seq_hash::NtHasher>::new_with_seed(k, seed+(42*i as u32));
-        hasher_vec.push(hasher);
-    }
-    hasher_vec
+    let hasher = <seq_hash::NtHasher>::new_with_seed(k, seed);
+    hasher
 }
