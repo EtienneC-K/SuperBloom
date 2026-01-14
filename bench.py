@@ -4,9 +4,11 @@ from sys import argv
 import csv
 import subprocess
 import math
+from time import perf_counter
 
 #function that launches all the tests and writes in the output file
 def main():
+    start_time = perf_counter()
     #start by reading all arguments
     input_file, threads, max_ram = parse_arguments()
 
@@ -29,6 +31,8 @@ def main():
 
     #writing to the csv
     write_data_to_csv(data)
+    end_time = perf_counter()
+    print(f"Benchmark runtime (in seconds) : {end_time-start_time}")
 
 
 def parse_arguments():
