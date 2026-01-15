@@ -22,6 +22,8 @@ def main():
     #launching gerbil with time
     data.append(run_gerbil(input_file, threads, max_ram))
     print("Gerbil done")
+    #add the count of kmers thanks to the gerbil histogram
+    data[0][0] += f", kmers with at least 3 occurences : {count_kmers()}"
 
     #writing a "header" transition before running bloomybloom
     data = write_transitional_header(data)
@@ -125,7 +127,7 @@ def run_gerbil(input_file, threads, max_ram):
     #runs gerbil, with 31mers, restricts max ram in GB
     executable_path = "./gerbil/build/gerbil"
     completed_run = None
-    command = f"\\time {executable_path} -k 31 -t {threads} -e {max_ram}GB -x h {input_file} temps/ results/gerbil_res"
+    command = f"\\time {executable_path} -k 31 -t {threads} -e {max_ram}GB -x h -d {input_file} temps/ results/gerbil_res"
 
     try :
         completed_run = subprocess.run(command, shell = True, capture_output = True)
@@ -148,6 +150,27 @@ def run_gerbil(input_file, threads, max_ram):
     run_data.insert(5, "")
 
     return run_data
+
+
+def count_kmers():
+    """opens gerbil's histogram and counts all >=3 kmers"""
+    sum = 0
+    with open ("temps/histogram.csv") as file :
+        csv_file = csv.reader(file)
+
+        csv_lines = []
+        for line in csv_file:
+            csv_lines.append(line)
+
+        for i in range (4, len(csv_lines)):
+            cell_value = 0
+            try :
+                cell_value = int(csv_lines[i][0].split(";")[1])
+            except IndexError :
+                cell_value = 0
+            sum += cell_value
+
+    return write_spaced_digits(sum)
 
 
 def write_transitional_header(data):
@@ -329,7 +352,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
-    #only one hash
+    #only one hash, irrelevant in the version that doesn't hash everything upfront
     n_hashes = 1
     only_parse = False
     #
@@ -380,7 +403,8 @@ def launch_and_collect(input_file, options):
 
     #we check the accuracy after the normal run, by comparing the results to gerbils histogram
     accuracy, skips = check_accuracy() #no arguments since output files paths are constant
-    accuracy = str(100-accuracy) + "%" #formatting it before writting
+    print(f"thats what i get for inaccuracy : {accuracy}")
+    accuracy = str(round(100-accuracy*100, 1)) + "%" #formatting it before writting
 
     #now for the counting version
     options += " --counting --auto-bench"
@@ -461,13 +485,15 @@ def check_accuracy():
     gerbil_results = read_gerbil_histo() #from 1 to 254, all others aggregated on 255, watch out for undefined ones
     bloomy_results, skips = read_bloomy_hitso()
 
-    total_kmers = 0
+    total_kmers_g = 0
+    total_kmers_b = 0
     offset = 0 #counts the sum of offsets between gerbils and bloomys results
     for i in range (252):
-        total_kmers += gerbil_results[i]
+        total_kmers_g += gerbil_results[i]
+        total_kmers_b += bloomy_results[i]
         offset += abs(gerbil_results[i]-bloomy_results[i])
 
-    accuracy = round(offset/total_kmers, 1)
+    accuracy = offset/max(total_kmers_g, total_kmers_b)
 
     return (accuracy, "_"+write_spaced_digits(skips)) #adding underscore to combat auto formats
 
