@@ -398,14 +398,34 @@ fn handle_sequence(
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
     bloom: &BloomFilter, hash_table: &CountTable, k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, no_hashtable: bool) -> usize {
+    //start by securing the mutex block
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        let mut last_hash: u64 = xorshift_u64(kmer.as_u64());
+        let mut hash: u64 = xorshift_u64(kmer.as_u64());
 
-        let already_in = bloom.check_and_insert(hashed_minimizer, last_hash);
+        let blocknum: usize = (hashed_minimizer as usize)%1024;
+        let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
+        let mut block = bloom.filter[blocknum].lock().unwrap();
+        let mut subblock = &mut block[subblocknum];
+
+        let mut present = true;
+        for i in 0..bloom.n_hashes {
+            //to get the address, heavy bits are from the minimizer (giving the block)
+            //and light bits are given by the hash of the kmer himself
+            let address = hash as usize%bloom.block_size;
+            if !subblock.get(address).unwrap() {
+                subblock.set(address, true);
+                present = false;
+            }
+            hash = xorshift_u64(hash);
+        }
+
+        //let already_in = bloom.check_and_insert(subblock, last_hash);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
         kmer_number+=1;
+
+        drop(block)
     }
     kmer_number
 }

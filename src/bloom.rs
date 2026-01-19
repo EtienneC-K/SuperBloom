@@ -10,8 +10,8 @@ use std::ops::Deref;
 pub struct BloomFilter {
     pub filter: Vec<Mutex<Vec<BitVec>>>,
     pub hasher: NtHasher, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
-    block_size: usize,
-    nb_blocks: usize,
+    pub block_size: usize,
+    pub nb_blocks: usize,
     pub n_hashes: usize,
 }
 
@@ -43,12 +43,12 @@ impl BloomFilter {
 
     ///checks if the kmer with specified minimizer hash, and multiple hashes is
     ///inside the bloom filter, inserts it if needed
-    pub fn check_and_insert(&self, hashed_minimizer: u64, mut hash: u64) -> bool {
+    pub fn check_and_insert(&self, mut subblock: &mut BitVec, mut hash: u64) -> bool {
         let mut present: bool = true;
-        let blocknum: usize = (hashed_minimizer as usize)%1024;
-        let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
-        let mut block = self.filter[blocknum].lock().unwrap();
-        let mut subblock = &mut block[subblocknum];
+        //let blocknum: usize = (hashed_minimizer as usize)%1024;
+        //let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
+        //let mut block = self.filter[blocknum].lock().unwrap();
+        //let mut subblock = &mut block[subblocknum];
 
         for i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
