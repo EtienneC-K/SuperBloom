@@ -281,7 +281,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
 
     #no_options default values
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
     #######
 
@@ -289,7 +289,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     n_hashes = 1
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
     #######
 
@@ -299,7 +299,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     block_size = size - 11
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
     #######
 
@@ -308,7 +308,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     size = ht_size + 6
     #for now just print to check its not through the roof
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
 
@@ -317,7 +317,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     ht_block_size = ht_size-18
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
     #default values, different stages of execution
@@ -342,14 +342,14 @@ def launch_bloomys(data, input_file, threads, max_ram):
     no_bloom = True
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
     #only parsing
     only_parse = True
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
     #only one hash, irrelevant in the version that doesn't hash everything upfront
@@ -357,7 +357,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
     only_parse = False
     #
     data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
-    data.append(launch_and_collect(input_file, options))
+    #data.append(launch_and_collect(input_file, options))
     print("Finished a bloomybloom option set")
 
 

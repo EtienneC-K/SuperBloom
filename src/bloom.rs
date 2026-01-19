@@ -43,14 +43,14 @@ impl BloomFilter {
 
     ///checks if the kmer with specified minimizer hash, and multiple hashes is
     ///inside the bloom filter, inserts it if needed
-    pub fn check_and_insert(&self, hashed_minimizer: u64, kmer_s_hashes: Vec<u64>) -> bool {
+    pub fn check_and_insert(&self, hashed_minimizer: u64, mut hash: u64) -> bool {
         let mut present: bool = true;
         let blocknum: usize = (hashed_minimizer as usize)%1024;
         let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
         let mut block = self.filter[blocknum].lock().unwrap();
         let mut subblock = &mut block[subblocknum];
 
-        for hash in kmer_s_hashes {
+        for i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%self.block_size;
@@ -58,6 +58,7 @@ impl BloomFilter {
                 subblock.set(address, true);
                 present = false;
             }
+            hash = xorshift_u64(hash);
         }
         present
     }
@@ -124,4 +125,11 @@ fn init_hasher(n_hashes : usize, seed: u32, k: usize) -> NtHasher {
     //we build hashers with slightly spaced seeds
     let hasher = <seq_hash::NtHasher>::new_with_seed(k, seed);
     hasher
+}
+
+fn xorshift_u64(mut x: u64) -> u64 {
+    x ^= x<<13;
+    x ^= x>>7;
+    x ^= x<<17;
+    x
 }

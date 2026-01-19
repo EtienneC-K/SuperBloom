@@ -400,23 +400,11 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
     mut kmer_number: usize, no_hashtable: bool) -> usize {
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        let mut kmer_s_hashes: Vec<u64> = Vec::new();
         let mut last_hash: u64 = xorshift_u64(kmer.as_u64());
 
-        for i in 0..bloom.n_hashes-1 {
-            last_hash = xorshift_u64(last_hash);
-            kmer_s_hashes.push(last_hash);
-        }
-
-        let kmer_hash: u64 = kmer_s_hashes[0]; //in case we need a copy of it for insertion
-        let already_in = bloom.check_and_insert(hashed_minimizer, kmer_s_hashes);
+        let already_in = bloom.check_and_insert(hashed_minimizer, last_hash);
         //do_smth if it was already in, like adding it to a hash_table for counting
         //problem with that : its gonna take an awful lot of space i think (it does)
-        if already_in && !no_hashtable {
-            //let bitvec_kmer: BitVec = convert_seqkmer(kmer);
-            //we take the first hash for the hash table as it seem to not rlly matter
-            hash_table.insert(kmer.as_u64(), kmer_hash, hashed_minimizer);
-        }
         kmer_number+=1;
     }
     kmer_number
