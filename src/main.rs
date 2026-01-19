@@ -399,14 +399,14 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
     bloom: &BloomFilter, hash_table: &CountTable, k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, no_hashtable: bool) -> usize {
     //start by securing the mutex block
+    let blocknum: usize = (hashed_minimizer as usize)%1024;
+    let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
+    let mut block = bloom.filter[blocknum].lock().unwrap();
+    let mut subblock = &mut block[subblocknum];
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
         let mut hash: u64 = xorshift_u64(kmer.as_u64());
 
-        let blocknum: usize = (hashed_minimizer as usize)%1024;
-        let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
-        let mut block = bloom.filter[blocknum].lock().unwrap();
-        let mut subblock = &mut block[subblocknum];
 
         let mut present = true;
         for i in 0..bloom.n_hashes {
@@ -425,8 +425,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         //problem with that : its gonna take an awful lot of space i think (it does)
         kmer_number+=1;
 
-        drop(block)
     }
+    drop(block);
     kmer_number
 }
 
