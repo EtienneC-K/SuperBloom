@@ -389,6 +389,7 @@ def launch_and_collect(input_file, options):
     counted_results = None
 
     command = f"\\time {executable_path} {options} {input_file}"
+    print(f"full command : {command}")
     try :
         completed_timed_run = subprocess.run(command, shell = True, capture_output = True)
         timed_results = parse_backslash_time(completed_timed_run.stderr)
@@ -413,7 +414,7 @@ def launch_and_collect(input_file, options):
         compelted_counted_run = subprocess.run(command, shell = True, capture_output = True)
         counted_results = parse_counted(compelted_counted_run.stdout)
     except Exception as e :
-        print("Bloomybloom problem :")
+        print("Bloomybloom (counting) problem :")
         print(e)
         counted_results = ["Failed"]*8
 

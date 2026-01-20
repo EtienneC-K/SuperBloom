@@ -168,11 +168,12 @@ pub fn main() {
     if args.input_type == 0 {
         let iter_files = read_fof(filename.to_string());
         iter_files.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
+            let mut all_addresses: Vec<usize> = vec![0; 7*(2*k-m) as usize];
             for line in chunk {
                 let sequence = read_fasta(line.to_string());
                 let local_kmer_sum =
                     handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks, 
-                    one_to_one, no_bloom, no_hashtable);
+                    one_to_one, no_bloom, no_hashtable, &mut all_addresses);
                 let mut total_sum = kmer_sum.lock().unwrap();
                 *total_sum = total_sum.wrapping_add(local_kmer_sum);
                 drop(total_sum);
@@ -193,6 +194,11 @@ pub fn main() {
         chunked_lines.par_bridge().for_each(|chunk| {
         //reader.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
             let mut block_lines_counter: usize = 0;
+
+            //to reduce number of created and destroyed vectors throughout
+            //let mut all_addresses: Vec<usize> = Vec::with_capacity(7*(2*(k-m) as usize));
+            let mut all_addresses: Vec<usize> = vec![0; 7*(2*k-m) as usize];
+
             for line in chunk {
                 //let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
                 //if line.len() > k as usize 
@@ -210,7 +216,7 @@ pub fn main() {
                     //println!("{:?}", line);
                     let local_kmer_sum =
                         handle_sequence(&bloom, &hash_table, sequence, k, m, n_hashes, nb_blocks,
-                        one_to_one, no_bloom, no_hashtable);
+                        one_to_one, no_bloom, no_hashtable, &mut all_addresses);
                     if !no_bloom {
                         let mut total_sum = kmer_sum.lock().unwrap();
                         *total_sum = total_sum.wrapping_add(local_kmer_sum);
@@ -333,6 +339,7 @@ fn handle_sequence(
     one_to_one: bool,
     no_bloom: bool,
     no_hashtable: bool,
+    all_addresses: &mut Vec<usize>,
     ) -> u64 {
     if sequence.len() <= k as usize {
         return 0;
@@ -369,7 +376,7 @@ fn handle_sequence(
             kmer_number = 
                 handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
                 n_hashes, bloom, hash_table, k, hashed_minimizer, kmer_number,
-                no_hashtable);
+                no_hashtable, all_addresses);
         }
     }
     //pas oublier le dernier morceau de la liste a évaluer maintenant
@@ -388,7 +395,7 @@ fn handle_sequence(
             (sequence.len()-1-k as usize) as u32,
             &sequence, 
             n_hashes, bloom, hash_table, k, hashed_minimizer,
-            kmer_number, no_hashtable);
+            kmer_number, no_hashtable, all_addresses);
     }
 
     //is here only to prevent optimisations in case no bloom filters
@@ -397,12 +404,12 @@ fn handle_sequence(
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_hashes: usize,
     bloom: &BloomFilter, hash_table: &CountTable, k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, no_hashtable: bool) -> usize {
+    mut kmer_number: usize, no_hashtable: bool, all_addresses: &mut Vec<usize>) -> usize {
     //start by securing the mutex block
-    let blocknum: usize = (hashed_minimizer as usize)%1024;
-    let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
-    let mut block = bloom.filter[blocknum].lock().unwrap();
-    let mut subblock = &mut block[subblocknum];
+    //let mut all_addresses: Vec<usize> = 
+    //    Vec::new();
+        //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
+    let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
         let mut hash: u64 = xorshift_u64(kmer.as_u64());
@@ -413,10 +420,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%bloom.block_size;
-            if !subblock.get(address).unwrap() {
-                subblock.set(address, true);
-                present = false;
-            }
+            all_addresses[last_relevant_index] = address;
+            last_relevant_index += 1;
             hash = xorshift_u64(hash);
         }
 
@@ -425,6 +430,17 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
         //problem with that : its gonna take an awful lot of space i think (it does)
         kmer_number+=1;
 
+    }
+    let mut relevant_addresses = &mut all_addresses[..last_relevant_index];
+    relevant_addresses.sort_unstable();
+    let blocknum: usize = (hashed_minimizer as usize)%1024;
+    let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
+    let mut block = bloom.filter[blocknum].lock().unwrap();
+    let mut subblock = &mut block[subblocknum];
+    for address in relevant_addresses {
+            if !subblock.get(*address).unwrap() {
+                subblock.set(*address, true);
+            }
     }
     drop(block);
     kmer_number
