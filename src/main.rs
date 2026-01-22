@@ -8,6 +8,7 @@ mod bloom;
 mod utils;
 mod counter;
 mod output;
+pub mod super_bitvec;
 
 use input::{read_fof, read_fasta, read_lines, Hell};
 use minimizers::minimizers_x_positions;
@@ -438,7 +439,7 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
     let mut block = bloom.filter[blocknum].lock().unwrap();
     let mut subblock = &mut block[subblocknum];
     for address in relevant_addresses {
-            if !subblock.get(*address).unwrap() {
+            if !subblock.get(*address) {
                 subblock.set(*address, true);
             }
     }

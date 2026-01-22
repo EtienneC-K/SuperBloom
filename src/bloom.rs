@@ -1,14 +1,16 @@
+use crate::super_bitvec;
 
 //use bitvec::BitVec;
 use seq_hash::NtHasher;
 use bit_vec::BitVec;
+use super_bitvec::SuperBitVec;
 use std::sync::Mutex;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::prelude::ParallelSliceMut;
 use std::ops::Deref;
 
 pub struct BloomFilter {
-    pub filter: Vec<Mutex<Vec<BitVec>>>,
+    pub filter: Vec<Mutex<Vec<SuperBitVec>>>,
     pub hasher: NtHasher, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
     pub block_size: usize,
     pub nb_blocks: usize,
@@ -22,9 +24,9 @@ impl BloomFilter {
         let magic_mutex_amount = 1024;
         assert!(magic_mutex_amount*block_size <= size);
         assert!(nb_blocks >= magic_mutex_amount);
-        let mut filter: Vec<Mutex<Vec<BitVec>>> = Vec::new();
+        let mut filter: Vec<Mutex<Vec<SuperBitVec>>> = Vec::new();
         for _ in 0..magic_mutex_amount {
-            filter.push(Mutex::new(vec![BitVec::from_elem(block_size, false);
+            filter.push(Mutex::new(vec![SuperBitVec::new(block_size);
                                         size/(block_size*magic_mutex_amount)]));
         }
         Self {
@@ -89,7 +91,7 @@ impl BloomFilter {
             for bit_vector in unlocked_block.deref() {
                 let mut counter: usize = 0;
                 for i in 0..bit_vector.len() {
-                    if bit_vector.get(i).unwrap() {
+                    if bit_vector.get(i) {
                         counter += 1;
                     }
                 }
