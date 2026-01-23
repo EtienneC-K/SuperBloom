@@ -379,7 +379,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
 
 def update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes):
     """updates the options and data variable with all the specified options values"""
-    options = f"-t {threads} --input-type 1 --size {size} --block-size {block_size} --table-size {ht_size} --table-block-size {ht_block_size}"
+    options = f"-t {threads} --input-type 1 --size {size} --block-size {block_size} --table-size {ht_size} --table-block-size {ht_block_size} -m {minimizer_size} --n-hashes {n_hashes}"
     if only_parse:
         options += " --only-parse"
     elif no_bloom:
@@ -388,7 +388,7 @@ def update_options(data, threads, size, block_size, ht_size, ht_block_size, no_h
         options += " --no-hashtable"
     
 
-    data.append(write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size))
+    data.append(write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes))
 
     return (data, options)
 
@@ -434,7 +434,7 @@ def launch_and_collect(input_file, options):
     return (timed_results+counted_results + ["", str(accuracy), skips])
 
 
-def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size):
+def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes):
     """
     function to write a human readable string with all options, this string will be appended to data
     important note : this writes all sizes fully, but the given variables are powers of 2
@@ -447,6 +447,7 @@ def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, onl
     return_text += f", ht-size : {write_spaced_digits(2**ht_size)}"
     return_text += f", ht-block-size : {write_spaced_digits(2**ht_block_size)}"
     return_text += f", nb-ht_blocks : {write_spaced_digits(2**(ht_size-ht_block_size))}"
+    return_text += f", n-hashes : {n_hashes}"
     return_text += f", no_hashtable : {no_ht}"
     return_text += f", no_bloom : {no_bloom}"
     return_text += f", only_parse : {only_parse}"
