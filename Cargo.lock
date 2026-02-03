@@ -133,6 +133,7 @@ dependencies = [
  "needletail",
  "nthash",
  "packed-seq",
+ "rand",
  "rayon",
  "seq-hash",
  "simd-minimizers",

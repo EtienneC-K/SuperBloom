@@ -3,12 +3,13 @@
 //! k<31)
 
 mod input;
-mod minimizers;
+//mod minimizers;
 mod bloom;
 mod utils;
 mod counter;
 mod output;
 pub mod super_bitvec;
+pub mod minimizers;
 
 use input::{read_fof, read_fasta, read_lines, Hell};
 use minimizers::minimizers_x_positions;
@@ -28,6 +29,8 @@ use std::fs::File;
 use std::io::BufRead;
 use std::sync::Mutex;
 use needletail::parse_fastx_file;
+use rand::Rng;
+
 
 ///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
@@ -81,6 +84,7 @@ struct Args {
 
     ///argument to set the blocks to match one to one the minimizers, based on minimizer length,
     ///and bloom size and overrides the blocksize
+    ///warning : deprecated, probably not functionnal anymore, especially for calc false pos rates
     #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     one_to_one: bool,
 
@@ -165,6 +169,9 @@ pub fn main() {
     //anti optims variable
     let kmer_sum: Mutex<u64> = Mutex::new(0);
 
+    //used to check for false negative rate at the end
+    let false_neg_list: Mutex<Vec<PackedSeqVec>> = Mutex::new(Vec::new());
+
     //now we parse and treat each input method
     if args.input_type == 0 {
         let iter_files = read_fof(filename.to_string());
@@ -210,7 +217,14 @@ pub fn main() {
                 //with this assumption make a packedseq from the sequence
                 let sequence = PackedSeqVec::from_ascii(&line);
 
-                
+                //roll a dice to add to the false negatives checker
+                let dice_roll = rand::thread_rng().gen_range(0..1000);
+                if dice_roll == 0 {
+                    let mut false_negs = false_neg_list.lock().unwrap();
+                    false_negs.push(sequence.clone());
+                    drop(false_negs);
+                }
+
                 if only_parse {
                     block_lines_counter += sequence.len();
                 } else {
@@ -236,6 +250,10 @@ pub fn main() {
     } else {
         panic!("Unrecognized input type, must be 0 or 1");
     }
+    let false_negs = false_neg_list.lock().unwrap().to_vec();
+    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m);
+    println!("false negative rate : {false_negative_rate}");
+    println!("false positive rate : {false_positive_rate}");
     
     //to prevent optims
     if only_parse {
@@ -393,7 +411,7 @@ fn handle_sequence(
     } else {
         let _ = 
             handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
-            (sequence.len()-1-k as usize) as u32,
+            (sequence.len()-k as usize) as u32,
             &sequence, 
             n_hashes, bloom, hash_table, k, hashed_minimizer,
             kmer_number, no_hashtable, all_addresses);
@@ -411,7 +429,7 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
     //    Vec::new();
         //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
-    for j in (start_pos as usize)..(end_pos as usize) {
+    for j in (start_pos as usize)..(end_pos as usize)+1 {
         let kmer: PackedSeq = sequence.slice(j..j+k as usize);
         let mut hash: u64 = xorshift_u64(kmer.as_u64());
 
