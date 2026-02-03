@@ -451,7 +451,7 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec, n_ha
 
     }
     let mut relevant_addresses = &mut all_addresses[..last_relevant_index];
-    relevant_addresses.sort_unstable();
+    //relevant_addresses.sort_unstable();
     let blocknum: usize = (hashed_minimizer as usize)%1024;
     let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
     let mut block = bloom.filter[blocknum].lock().unwrap();
