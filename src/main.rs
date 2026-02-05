@@ -8,11 +8,13 @@ mod bloom;
 mod utils;
 mod counter;
 mod output;
+mod decyclers;
 pub mod super_bitvec;
 pub mod minimizers;
 
 use input::{read_fof, read_fasta, read_lines, Hell};
 use minimizers::minimizers_x_positions;
+use decyclers::{Decycler, compute_membership, init_vec_ci};
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
 use counter::{CountTable};
@@ -156,6 +158,29 @@ pub fn main() {
     unsafe {
         env::set_var("RAYON_NUM_THREADS", args.threads);
     }
+
+    //////DEBUGGING
+    //////////////////////////////////
+    //let mut test_decycler: Decycler = Decycler::new(11);
+    //test_decycler.compute_blocks();
+    //let to_look: PackedSeqVec = PackedSeqVec::from_ascii("AAAAAACAAAA".as_bytes());
+    //let toto = test_decycler.lookup(to_look.as_slice());
+    //println!("ca c'est mon toto : {toto}");
+    //let int_test: u64 = to_look.as_slice().as_u64();
+    //let membermember: bool = compute_membership(int_test, 11, &init_vec_ci(11));
+    //println!("et ca le membership calculé direct a la main : {membermember}");
+    let mut small_decycler: Decycler = Decycler::new(3);
+    small_decycler.compute_blocks();
+    for i in 0..64 {
+        let trust_the_process: bool = compute_membership(i, 3, &init_vec_ci(3));
+        print!("{}", trust_the_process as u8);
+    }
+    println!("");
+    let da_entier = small_decycler.direct_list[0][0];
+    println!("{:#b}", da_entier);
+    println!("finished da debuggin part");
+    //////////////////////////////////
+
 
     //for now check of size awith the blocks, later only two of them will be specified
     //assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
