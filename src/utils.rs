@@ -11,7 +11,7 @@ pub fn xorshift_u64(mut x: u64) -> u64 {
     x
 }
 
-pub fn xorshift_u32(mut x: u32) -> u32 {
+pub fn _xorshift_u32(mut x: u32) -> u32 {
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;

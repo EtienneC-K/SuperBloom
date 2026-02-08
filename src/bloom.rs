@@ -1,5 +1,6 @@
 use crate::super_bitvec;
 use crate::minimizers;
+use crate::decyclers;
 
 //use bitvec::BitVec;
 use seq_hash::NtHasher;
@@ -10,20 +11,21 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use rayon::prelude::ParallelSliceMut;
 use std::ops::Deref;
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
-use simd_minimizers::{canonical_minimizers};
-use minimizers::minimizers_x_positions;
+use decyclers::Decycler;
+//use simd_minimizers::{canonical_minimizers};
+use minimizers::{minimizers_x_positions, decycling_mins_x_pos};
 use rand::prelude::*;
 
 pub struct BloomFilter {
     pub filter: Vec<Mutex<Vec<SuperBitVec>>>,
-    pub hasher: NtHasher, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
+    //pub hasher: NtHasher, //a vec of hash functions maybe ,or smth like an ntHash build je sais pas
     pub block_size: usize,
     pub nb_blocks: usize,
     pub n_hashes: usize,
 }
 
 impl BloomFilter {
-    pub fn new_with_seed(size: usize, n_hashes: usize, seed: u32, k: usize, block_size: usize, 
+    pub fn new_with_seed(size: usize, n_hashes: usize, _seed: u32, _k: usize, block_size: usize, 
         nb_blocks: usize) -> Self {
 
         let magic_mutex_amount = 1024;
@@ -36,7 +38,8 @@ impl BloomFilter {
         }
         Self {
             filter: filter,
-            hasher: init_hasher(n_hashes, seed, k),
+            //hasher: init_hasher(n_hashes, seed, k),
+            //hasher: init_hasher(seed, k),
             block_size,
             nb_blocks,
             n_hashes,
@@ -50,14 +53,14 @@ impl BloomFilter {
 
     ///checks if the kmer with specified minimizer hash, and multiple hashes is
     ///inside the bloom filter, inserts it if needed
-    pub fn check_and_insert(&self, mut subblock: &mut BitVec, mut hash: u64) -> bool {
+    pub fn _check_and_insert(&self, subblock: &mut BitVec, mut hash: u64) -> bool {
         let mut present: bool = true;
         //let blocknum: usize = (hashed_minimizer as usize)%1024;
         //let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
         //let mut block = self.filter[blocknum].lock().unwrap();
         //let mut subblock = &mut block[subblocknum];
 
-        for i in 0..self.n_hashes {
+        for _i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%self.block_size;
@@ -71,7 +74,7 @@ impl BloomFilter {
     }
 
     ///now unusable and wrong because of change in format of the filter
-    pub fn check_true_bits(&self) -> usize {
+    pub fn _check_true_bits(&self) -> usize {
         //let mut counter: usize = 0;
         //for block in &self.filter {
         //    let unlocked_block = block.lock().unwrap();
@@ -125,9 +128,9 @@ impl BloomFilter {
     }
 
     ///checks the false negative and false positive counts of the bloom filter
-    pub fn count_false_bloom(&self, to_check: Vec<PackedSeqVec>, k: u16, m: u16) -> (f64, f64) {
-        let (false_negs, total_neg_tests, nb_seq_neg_tests) = self.count_false_negatives(to_check, k, m);
-        let false_pos = self.count_false_positives(k, m, total_neg_tests, nb_seq_neg_tests);
+    pub fn count_false_bloom(&self, to_check: Vec<PackedSeqVec>, k: u16, m: u16, decycler_set: &Decycler) -> (f64, f64) {
+        let (false_negs, total_neg_tests, nb_seq_neg_tests) = self.count_false_negatives(to_check, k, m, decycler_set);
+        let false_pos = self.count_false_positives(k, m, total_neg_tests, nb_seq_neg_tests, decycler_set);
         (false_negs, false_pos)
     }
 
@@ -135,15 +138,20 @@ impl BloomFilter {
     ///using a set of kmer that where supposed to be inserted, and randomly generated kmers checks
     ///that the rate of insertions is (hopefully) 1, and the rate of false positives is (hopefully)
     ///very low
-    pub fn count_false_negatives (&self, to_check : Vec<PackedSeqVec>, k: u16, m: u16) 
-        -> (f64, usize, usize) {
+    pub fn count_false_negatives (
+        &self,
+        to_check : Vec<PackedSeqVec>,
+        k: u16,
+        m: u16,
+        decycler_set: &Decycler,
+        ) -> (f64, usize, usize) {
         //start by checking for false negatives
         let nb_seq_neg_tests: usize = to_check.len();
         let mut false_negative_count: usize = 0;
         let mut total_count: usize = 0;
         for sequence in to_check {
             total_count += sequence.len()-(k as usize)+1;
-            let (_count_true, count_false) = self.check_sequence(sequence, k, m);
+            let (_count_true, count_false) = self.check_sequence(sequence, k, m, decycler_set);
             //false_negative_count += sequence.len()-(k as usize)+1-self.check_sequence(sequence, k, m);
             false_negative_count += count_false;
         }
@@ -156,12 +164,14 @@ impl BloomFilter {
     ///makes a number of test in the same order of magnitude as the amount of false negs checks
     pub fn count_false_positives(&self, k: u16, m: u16, 
         total_false_negs: usize,
-        nb_sequence_false_negs: usize) -> f64 {
-        //
+        nb_sequence_false_negs: usize,
+        decycler_set: &Decycler,
+        ) -> f64 {
+
         let mut total_false_pos: usize = 0;
         let avg_len: usize = total_false_negs/nb_sequence_false_negs;
-        for i in 0..nb_sequence_false_negs {
-            total_false_pos += self.make_n_check_sequence(k, m, avg_len);
+        for _i in 0..nb_sequence_false_negs {
+            total_false_pos += self.make_n_check_sequence(k, m, avg_len, decycler_set);
         }
 
         let false_pos_rate: f64 = 
@@ -170,12 +180,12 @@ impl BloomFilter {
     }
 
     ///generates a random sequence before counting false positives in it
-    fn make_n_check_sequence(&self, k: u16, m: u16, avg_len: usize) -> usize {
+    fn make_n_check_sequence(&self, k: u16, m: u16, avg_len: usize, decycler_set: &Decycler) -> usize {
         //generate random sequence
         let mut rng = rand::rng();
         let mut seq: String = String::from("");
         let rand_mapping: String = String::from("ACGT");
-        for i in 0..avg_len {
+        for _i in 0..avg_len {
             let mut rand_num: u8 = rng.random::<u8>();
             rand_num %= 4;
             seq.push(rand_mapping.as_bytes()[rand_num as usize] as char);
@@ -183,7 +193,7 @@ impl BloomFilter {
         let sequence: PackedSeqVec = PackedSeqVec::from_ascii(seq.as_bytes());
 
         //now to check false positives
-        let (count_true, _) = self.check_sequence(sequence, k, m);
+        let (count_true, _) = self.check_sequence(sequence, k, m, decycler_set);
 
         count_true
     }
@@ -191,23 +201,24 @@ impl BloomFilter {
     ///simply checks if a sequence of kmer is present or not, does no insertion and isn't thought to be suited
     ///for parallel operations, as only small checks at the end
     ///returns the number of present kmers from the sequence, as well as the number of absent ones
-    fn check_sequence(&self, sequence: PackedSeqVec, k: u16, m: u16) -> (usize, usize) {
+    fn check_sequence(&self, sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
         let mut count_true: usize = 0;
         let mut count_false: usize = 0;
         //must get the minimizer here, as its not just provided
-        let (super_kmers_positions, minimizers, sequence) = minimizers_x_positions(sequence, k, m);
+        //let (super_kmers_positions, minimizers, quence) = minimizers_x_positions(sequence, k, m);
+        let (super_kmers_positions, minimizers, sequence) = decycling_mins_x_pos(sequence, k, m, decycler_set);
         for i in 0..super_kmers_positions.len() {
             let hashed_minimizer: u64 = xorshift_u64(minimizers[i]);
             let start_pos: usize = super_kmers_positions[i] as usize;
-            let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()-k as usize} 
+            let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize} 
                                     else {super_kmers_positions[i+1] as usize};
             //must compute the subblock by ourselves, its not furnished this time around
             let blocknum: usize = (hashed_minimizer as usize)%1024;
             let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
             let mut block = self.filter[blocknum].lock().unwrap();
-            let mut subblock = &mut block[subblocknum];
+            let subblock = &mut block[subblocknum];
 
-            for j in start_pos..end_pos+1 {
+            for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
                 let hash: u64 = xorshift_u64(kmer.as_u64());
                 let present: bool = self.check_kmer(subblock, hash);
@@ -222,9 +233,9 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer(&self, mut subblock: &mut SuperBitVec, mut hash: u64) -> bool {
+    fn check_kmer(&self, subblock: &mut SuperBitVec, mut hash: u64) -> bool {
 
-        for i in 0..self.n_hashes {
+        for _i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             let address = hash as usize%self.block_size;
@@ -239,8 +250,9 @@ impl BloomFilter {
 
 
 ///to get the NtHasher hasher's when creating the bloomfilter
-fn init_hasher(n_hashes : usize, seed: u32, k: usize) -> NtHasher {
-    let mut hasher_vec: Vec<NtHasher> = Vec::new();
+//fn init_hasher(n_hashes : usize, seed: u32, k: usize) -> NtHasher {
+fn _init_hasher(seed: u32, k: usize) -> NtHasher {
+    //let mut hasher_vec: Vec<NtHasher> = Vec::new();
     //we build hashers with slightly spaced seeds
     let hasher = <seq_hash::NtHasher>::new_with_seed(k, seed);
     hasher

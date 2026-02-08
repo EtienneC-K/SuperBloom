@@ -8,8 +8,8 @@ use std::path::Path;
 use packed_seq::{PackedSeqVec, SeqVec};
 //use bitvec::prelude::*;
 use needletail::FastxReader;
-use needletail::parser::SequenceRecord;
-use needletail::errors::ParseError;
+//use needletail::parser::SequenceRecord;
+//use needletail::errors::ParseError;
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
 pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
@@ -96,12 +96,9 @@ impl Iterator for Hell {
     fn next(&mut self) -> Option<Self::Item> {
         let mut chunk = Vec::new();
         for _ in 0..self.chunk_size {
-            if let result = self.fxreader.next()? {
-                let seq_red = result.unwrap().seq().to_mut().clone();
-                chunk.push(seq_red);
-            } else {
-                break;
-            }
+            let result = self.fxreader.next()?;
+            let seq_red = result.unwrap().seq().to_mut().clone();
+            chunk.push(seq_red);
         }
         if chunk.is_empty() {
             None
@@ -111,8 +108,7 @@ impl Iterator for Hell {
     }
 }
 
-pub struct ExtraHell {
-    pub fxreader: Box<dyn FastxReader>,
-    pub chunk_size: usize,
-}
-
+//pub struct ExtraHell {
+//    pub fxreader: Box<dyn FastxReader>,
+//    pub chunk_size: usize,
+//}
