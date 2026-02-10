@@ -8,6 +8,7 @@ mod bloom;
 mod utils;
 mod counter;
 mod output;
+mod unit_tests_one_day;
 pub mod decyclers;
 pub mod super_bitvec;
 pub mod minimizers;
@@ -20,6 +21,7 @@ use bloom::BloomFilter;
 use counter::{CountTable};
 use utils::{xorshift_u64};
 use output::{write_output};
+use unit_tests_one_day::{all_mins_size_3};
 //use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
@@ -180,7 +182,11 @@ pub fn main() {
     //println!("");
     //let da_entier = small_decycler.direct_list[0][0];
     //println!("{:#b}", da_entier);
+
+    //let lui_il_y_est: bool = small_decycler.lookup(PackedSeqVec::from_ascii("AAA".as_bytes()).as_slice());
+    //println!("et lui il y est : {lui_il_y_est}");
     //println!("finished da debuggin part");
+    all_mins_size_3();
 
     //////////////////////////////////
 

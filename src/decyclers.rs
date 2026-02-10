@@ -7,7 +7,8 @@ use rayon::prelude::*;
 //use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use packed_seq::{PackedSeq, Seq};
 
-const CYCLER_BLOCK_SIZE: usize = 512; //just always keep it a power of 2
+//const CYCLER_BLOCK_SIZE: usize = 512; //just always keep it a power of 2
+const CYCLER_BLOCK_SIZE: usize = 1; //just always keep it a power of 2
 
 pub struct Decycler {
     m: u16, //minimizer length
@@ -64,6 +65,7 @@ fn compute_block(i: usize, block: &mut Vec<u64>, m: u16, vec_ci: &Vec<f64>) {
     for j in 0..CYCLER_BLOCK_SIZE {
         let mut to_insert: u64 = 0;
         for k in 0..64 {
+            //let is_decycler: bool = compute_membership(4_u64.pow(m as u32)-kmer, m, vec_ci);
             let is_decycler: bool = compute_membership(kmer, m, vec_ci);
             if is_decycler {
                 to_insert += 1<<(63-k);
@@ -84,7 +86,8 @@ pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
     let mut imaginary_x: f64 = 0.0; 
     let mut imaginary_x_prime: f64 = 0.0;
     for i in 0..m {
-        let x_i: u64 = (kmer>>(2*(m-i-1)))%4;
+        //let x_i: u64 = (kmer>>(2*(m-i-1)))%4;
+        let x_i: u64 = (kmer>>(2*i))%4;
         imaginary_x += vec_ci[i as usize]*x_i as f64;
         let i_prime: usize = if i<m-1 {i as usize+1} else {0};
         imaginary_x_prime += vec_ci[i_prime]*x_i as f64;
