@@ -42,6 +42,11 @@ pub fn minimizers_x_positions(packed_seq: PackedSeqVec, k: u16, m: u16)
 pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler)
     -> (Vec<u32>, Vec<u64>, PackedSeqVec) {
 
+    //protection against sequences too short
+    if packed_seq.len() <= k as usize+2 {
+        return ([].to_vec(), [].to_vec(), packed_seq);
+    }
+
     let mut minimizer_vals = Vec::new();
     let mut super_kmers = Vec::new(); //those are actually positions, not the superkmers themselves
 
