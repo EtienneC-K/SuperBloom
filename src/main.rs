@@ -397,7 +397,7 @@ fn handle_sequence(
     all_addresses: &mut Vec<usize>,
     decycler_set: &Decycler,
     ) -> u64 {
-    if sequence.len() <= k as usize {
+    if sequence.len() <= k+2 as usize {
         return 0;
     }
     let mut local_kmer_sum: u64 = 0;
