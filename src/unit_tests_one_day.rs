@@ -21,6 +21,14 @@ pub fn all_mins_size_3() {
     println!("c'était bien l'entier qu'on attendait : {cetaitbiencequonattendait}");
     println!("{:#b}", da_entier);
 
+    println!("maybe the light at the end of the tunnel here");
+    let mut mid_decycler: Decycler = Decycler::new(5);
+    mid_decycler.compute_blocks();
+    let lui_il_fait_peur: bool = mid_decycler.lookup(PackedSeqVec::from_ascii("TTTTC".as_bytes()).as_slice());
+    println!("the tunnel be like {lui_il_fait_peur}");
+    let lui_il_fait_peur: bool = mid_decycler.lookup(PackedSeqVec::from_ascii("CTTTT".as_bytes()).as_slice());
+    println!("the tunnel be like {lui_il_fait_peur}");
+
 
     print!("0b"); //to align it with previous prints
     let lui_il_y_est: bool = small_decycler.lookup(PackedSeqVec::from_ascii("AAA".as_bytes()).as_slice());
