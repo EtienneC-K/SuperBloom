@@ -258,7 +258,7 @@ pub fn main() {
 
                 if only_parse {
                     block_lines_counter += sequence.len();
-                } else {
+                } else if sequence.len() >= k as usize+2 {
                     //println!("{:?}", line);
                     let local_kmer_sum =
                         handle_sequence(&bloom, &hash_table, sequence, k, m, nb_blocks,
