@@ -186,7 +186,7 @@ pub fn main() {
     //let lui_il_y_est: bool = small_decycler.lookup(PackedSeqVec::from_ascii("AAA".as_bytes()).as_slice());
     //println!("et lui il y est : {lui_il_y_est}");
     //println!("finished da debuggin part");
-    all_mins_size_3();
+    //all_mins_size_3();
 
     //////////////////////////////////
 
@@ -287,10 +287,12 @@ pub fn main() {
     } else {
         panic!("Unrecognized input type, must be 0 or 1");
     }
-    let false_negs = false_neg_list.lock().unwrap().to_vec();
-    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, &decycler_set);
-    println!("false negative rate : {false_negative_rate}");
-    println!("false positive rate : {false_positive_rate}");
+    if !args.auto_bench {
+        let false_negs = false_neg_list.lock().unwrap().to_vec();
+        let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, &decycler_set);
+        println!("false negative rate : {false_negative_rate}");
+        println!("false positive rate : {false_positive_rate}");
+    }
     
     //to prevent optims
     if only_parse {
