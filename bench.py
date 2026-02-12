@@ -198,6 +198,11 @@ def write_transitional_header(data):
         "average fill",
         "median fill",
         "",
+        "false negs",
+        "false pos",
+        "",
+        "Decycling set calculation time",
+        "",
         "accuracy",
         "skips"
     ]
@@ -339,11 +344,21 @@ def launch_bloomys(data, input_file, threads, max_ram):
     #print("Finished a bloomybloom option set")
 
     #Now to make a matrix for evolution of minimizer sizes and block sizes, only with the bloom, and n_hashes 3
+    #n_hashes = 3
+    #for i in [9, 11, 13, 15, 17, 19]:
+    #    for j in [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]:
+    #        minimizer_size = i
+    #        block_size = j
+    #        data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
+    #        data.append(launch_and_collect(input_file, options))
+    #        print("Finished a bloomybloom option set")
+
+    #forget the matrix and makes the small lil cuty plots
     n_hashes = 3
-    for i in [9, 11, 13, 15, 17, 19]:
-        for j in [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]:
-            minimizer_size = i
-            block_size = j
+    for b in [1, 2, 3]:
+        for minimizer_size in [11, 13, 15, 17]:
+            nb_blocks = 2*(minimizer_size-b)
+            block_size = size-nb_blocks
             data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes)
             data.append(launch_and_collect(input_file, options))
             print("Finished a bloomybloom option set")
@@ -414,7 +429,7 @@ def launch_and_collect(input_file, options):
         timed_results = ["Failed"]*8
 
     #we check the accuracy after the normal run, by comparing the results to gerbils histogram
-    accuracy, skips = check_accuracy() #no arguments since output files paths are constant
+    accuracy, skips = 0, 0 #no arguments since output files paths are constant
     print(f"thats what i get for inaccuracy : {accuracy}")
     accuracy = str(round(100-accuracy*100, 1)) + "%" #formatting it before writting
 
@@ -474,18 +489,24 @@ def insert_char(s, c, index):
 def parse_counted(count_output):
     """reads the first line of the counted output, the one with all the slashes
     also writes down the data truncated to not overwelm output with too many decimal places"""
+    print("thats the count output thingy")
+    print(count_output)
     data_line = count_output.decode("utf-8").splitlines()[0]
     data_line = data_line.split("|")
     return_list = []
-    for i in range(8):
+    print("printing all the data bits")
+    for i in range(11):
         #main use of this loop is to check the length of data_line, ie if no errors in bloomybloom
         data_bit = data_line[i]
         data_bit = data_bit[0:6]
         return_list.append(data_bit)
+        print(data_bit)
 
     #no to insert spaces in the list to align the columns
     return_list.insert(0, "")
     return_list.insert(5, "")
+    return_list.insert(10, "")
+    return_list.insert(13, "")
 
     return return_list
 

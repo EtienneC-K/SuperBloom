@@ -34,6 +34,7 @@ use clap::Parser;
 use std::sync::Mutex;
 use needletail::parse_fastx_file;
 use rand::Rng;
+use std::time::{Duration, Instant};
 
 
 ///taking care of all the needed command line arguments
@@ -199,8 +200,16 @@ pub fn main() {
     //we create the needed data structures to store everything
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
     let hash_table = CountTable::new(table_size, table_block_size);
+
+    //calculating decycling sets as well as its time
+    let debut = Instant::now();
     let mut decycler_set = Decycler::new(m);
     decycler_set.compute_blocks();
+    let duration_overhead_decycling = debut.elapsed();
+
+    if !args.auto_bench {
+        println!("Decycling set calculation time : {}", duration_overhead_decycling.as_secs());
+    }
 
     //anti optims variable
     let kmer_sum: Mutex<u64> = Mutex::new(0);
@@ -287,9 +296,9 @@ pub fn main() {
     } else {
         panic!("Unrecognized input type, must be 0 or 1");
     }
+    let false_negs = false_neg_list.lock().unwrap().to_vec();
+    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, &decycler_set);
     if !args.auto_bench {
-        let false_negs = false_neg_list.lock().unwrap().to_vec();
-        let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, &decycler_set);
         println!("false negative rate : {false_negative_rate}");
         println!("false positive rate : {false_positive_rate}");
     }
@@ -329,6 +338,9 @@ pub fn main() {
             block_size,
             table_size,
             table_block_size,
+            false_negative_rate,
+            false_positive_rate,
+            duration_overhead_decycling,
             )
     }
     else {
@@ -518,6 +530,9 @@ fn write_auto_bench_stdout(
     block_size: usize,
     table_size: usize,
     table_block_size: usize,
+    false_positive_rate: f64,
+    false_negative_rate: f64,
+    duration_overhead_decycling: Duration,
     ) {
     let mut print_string = String::new();
     //writes every number looked for by the benchmark programm in a single line
@@ -547,6 +562,12 @@ fn write_auto_bench_stdout(
     } else {
         print_string += "|0|0|0|0";
     }
+
+    //false negatives and false potitives rates
+    print_string += &format!("|{:.3}|{:.3}", false_positive_rate, false_negative_rate);
+
+    //duration of overhead decycling set calculation
+    print_string += &format!("|{}", duration_overhead_decycling.as_secs());
 
     println!("{print_string}");
 }
