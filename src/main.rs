@@ -19,7 +19,7 @@ use decyclers::{Decycler, compute_membership, init_vec_ci};
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
 use counter::{CountTable};
-use utils::{xorshift_u64};
+use utils::{xorshift_u64, compute_insertions};
 use output::{write_output};
 use unit_tests_one_day::{all_mins_size_3};
 //use seq_hash::{KmerHasher};
@@ -505,18 +505,24 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
         kmer_number+=1;
 
     }
-    let relevant_addresses = &mut all_addresses[..last_relevant_index];
+    let relevant_addresses = &all_addresses[..last_relevant_index];
     //relevant_addresses.sort_unstable();
+    //start by computing all the u64 that will be inserted
+    let to_inserts: Vec<u64> = compute_insertions(relevant_addresses);
+    //then insert them inside the correct block
     let blocknum: usize = (hashed_minimizer as usize)%1024;
     let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
     let mut block = bloom.filter[blocknum].lock().unwrap();
     let subblock = &mut block[subblocknum];
-    for address in relevant_addresses {
-            if !subblock.get(*address) {
-                subblock.set(*address, true);
-            }
-    }
+    subblock.set_row(&to_inserts, relevant_addresses);
     drop(block);
+
+    //for address in relevant_addresses {
+    //        if !subblock.get(*address) {
+    //            subblock.set(*address, true);
+    //        }
+    //}
+    //drop(block);
     kmer_number
 }
 
