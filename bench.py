@@ -325,8 +325,8 @@ def launch_bloomys(data, input_file, threads, max_ram):
     #data.append(launch_and_collect(input_file, options))
     #print("Finished a bloomybloom option set")
 
-    #default values, different stages of execution
-    size = 33
+    #not default values, different stages of execution
+    size = 36
     block_size = 14
     ht_size = 28
     ht_block_size = 14
