@@ -43,17 +43,6 @@ impl SuperBitVec {
         }
     }
 
-    ///sets a bunch of bits inside an entire row, and hopefully the compiler optimizes these
-    pub fn set_row(&mut self, to_inserts: &Vec<u64>, addresses: &[usize]) {
-    //pub fn set_row(&mut self, to_inserts: &Vec<u64>, addresses: &Vec<usize>) {
-        assert_eq!(to_inserts.len(), addresses.len());
-
-        for i in 0..to_inserts.len() {
-            let block_num: usize = addresses[i]/64;
-            self.vector[block_num] = self.vector[block_num] | to_inserts[i];
-        }
-    }
-
     ///getter for a certain bit
     pub fn get(&self, address: usize) -> bool {
         let block = self.vector[address/64];
