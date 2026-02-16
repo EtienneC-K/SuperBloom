@@ -13,7 +13,7 @@ use std::ops::Deref;
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use decyclers::Decycler;
 //use simd_minimizers::{canonical_minimizers};
-use minimizers::{minimizers_x_positions, decycling_mins_x_pos};
+use minimizers::{decycling_mins_x_pos};
 use rand::prelude::*;
 
 pub struct BloomFilter {

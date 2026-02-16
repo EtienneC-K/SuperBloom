@@ -15,13 +15,13 @@ pub mod minimizers;
 
 use input::{read_fof, read_fasta, Hell};
 use minimizers::{decycling_mins_x_pos};
-use decyclers::{Decycler, compute_membership, init_vec_ci};
+use decyclers::{Decycler};
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
 use counter::{CountTable};
 use utils::{xorshift_u64};
 use output::{write_output};
-use unit_tests_one_day::{all_mins_size_3};
+//use unit_tests_one_day::{all_mins_size_3};
 //use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace

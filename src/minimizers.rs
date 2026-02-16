@@ -52,7 +52,7 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
 
     //start by making an index to know if theyre in the decycling set
     let mut is_decycler: Vec<bool> = Vec::with_capacity(packed_seq.len()-m as usize+1);
-    let vec_ci = init_vec_ci(m);
+    //let vec_ci = init_vec_ci(m);
     for i in 0..packed_seq.len()-m as usize+1 {
         is_decycler.push(decycler_set.lookup(packed_seq.slice(i..i+m as usize)));
         //
@@ -72,23 +72,9 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
     //then we roll
     for i in 1..packed_seq.len()+1-k as usize {
         //we check if the old minimizer is still in the new window
-        if min_addr >= i {
-            //if it this, just compare it to the new one
-            let j = i+k as usize-m as usize;
-            let current_decyc: bool = is_decycler[j];
-            let current_lexic = packed_seq.slice(j..j+m as usize);
-            if current_decyc && !is_decyc {
-                //we found a first memeber of a decycling set
-                is_decyc = true;
-                min_lexic = current_lexic;
-                min_addr = j;
-            } else if is_decyc == current_decyc && min_lexic > current_lexic {
-                //found a lexicographically smaller one
-                min_lexic = current_lexic;
-                min_addr = j;
-            }
-        } else {
-            //otherwise, we need to go over the entire window once more
+        if min_addr < i {
+            //is the previous memeber of decycling set rolls out, or it wasn't one in the first
+            //place and it just rolled out, we look for a new minimizer
             (min_addr, is_decyc, min_lexic) =
                 mins_from_kmer(packed_seq.as_slice(), &is_decycler, i, m, k);
         }
@@ -124,23 +110,9 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
 
 fn mins_from_kmer<'a>(packed_seq: PackedSeq<'a>, is_decycler: &Vec<bool>, i: usize, m: u16, k: u16) 
     -> (usize, bool, PackedSeq<'a>) {
-    let mut is_decyc: bool = is_decycler[i];
-    let mut min_lexic = packed_seq.slice(i..i+m as usize);
-    let mut min_addr: usize = i;
-    for j in i+1..i+k as usize -m as usize+1 {
-        let current_decyc: bool = is_decycler[j];
-        let current_lexic = packed_seq.slice(j..j+m as usize);
-        if current_decyc && !is_decyc {
-            //we found a first memeber of a decycling set
-            is_decyc = true;
-            min_lexic = current_lexic;
-            min_addr = j;
-        } else if is_decyc == current_decyc && min_lexic > current_lexic {
-            //found a lexicographically smaller one
-            min_lexic = current_lexic;
-            min_addr = j;
-        }
-    }
 
-    (min_addr, is_decyc, min_lexic)
+    for j in i..i+k as usize-m as usize+1 {
+        if is_decycler[j] {return (j, true, packed_seq.slice(j..j+m as usize))};
+    }
+    (i, false, packed_seq.slice(i..i+m as usize))
 }

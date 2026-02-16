@@ -3,12 +3,14 @@
 
 use crate::decyclers;
 
-use decyclers::{Decycler, compute_membership, init_vec_ci};
-use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
+//use decyclers::{Decycler, compute_membership, init_vec_ci};
+//use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
+use decyclers::{Decycler};
+use packed_seq::{Seq, PackedSeqVec, SeqVec};
 
 ///test on all the minimizer that i hand computed to check
 ///1000100011001110000011001100111000000000111011100000000000001111 should be the answer
-pub fn all_mins_size_3() {
+pub fn _all_mins_size_3() {
     let numero: u64 = PackedSeqVec::from_ascii("AAT".as_bytes()).as_slice().as_u64();
     println!("{numero}");
     let numero: u64 = PackedSeqVec::from_ascii("TAA".as_bytes()).as_slice().as_u64();
