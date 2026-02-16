@@ -54,15 +54,6 @@ impl SuperBitVec {
         }
     }
 
-    ///OR's the thread local vec to the superbitvec thats in the block
-    pub fn full_insertion(&mut self, thread_local_vec: &Vec<u64>) {
-        assert_eq!(thread_local_vec.len(), self.vector.len());
-
-        for i in 0..thread_local_vec.len() {
-            self.vector[i] = self.vector[i] | thread_local_vec[i];
-        }
-    }
-
     ///getter for a certain bit
     pub fn get(&self, address: usize) -> bool {
         let block = self.vector[address/64];
