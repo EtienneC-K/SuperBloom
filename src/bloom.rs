@@ -13,7 +13,7 @@ use std::ops::Deref;
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use decyclers::Decycler;
 //use simd_minimizers::{canonical_minimizers};
-use minimizers::{decycling_mins_x_pos};
+use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use rand::prelude::*;
 
 pub struct BloomFilter {
@@ -112,7 +112,7 @@ impl BloomFilter {
                     *el_counter = el_counter.saturating_add(counter);
                     drop(el_counter)
                 }
-                //TODO
+
                 //add a counter of blocks filled above a certain threshhold
                 let threshhold: f64 = 0.9;
                 if counter as f64/self.block_size as f64 > threshhold {
@@ -212,12 +212,26 @@ impl BloomFilter {
     ///simply checks if a sequence of kmer is present or not, does no insertion and isn't thought to be suited
     ///for parallel operations, as only small checks at the end
     ///returns the number of present kmers from the sequence, as well as the number of absent ones
-    fn check_sequence(&self, sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
+    fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
         let mut count_true: usize = 0;
         let mut count_false: usize = 0;
         //must get the minimizer here, as its not just provided
         //let (super_kmers_positions, minimizers, quence) = minimizers_x_positions(sequence, k, m);
-        let (super_kmers_positions, minimizers, sequence) = decycling_mins_x_pos(sequence, k, m, decycler_set);
+
+
+        let (super_kmers_positions, minimizers, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec);
+        if decycler_set.m > 1 {
+            //we use the decycler
+            (super_kmers_positions, minimizers, sequence) =
+                decycling_mins_x_pos(original_sequence, k, m, decycler_set);
+        } else {
+            //we use simd_minimizer
+            (super_kmers_positions, minimizers, sequence) =
+                minimizers_x_positions(original_sequence, k, m);
+        }
+
+
+        //let (super_kmers_positions, minimizers, sequence) = decycling_mins_x_pos(sequence, k, m, decycler_set);
         for i in 0..super_kmers_positions.len() {
             let hashed_minimizer: u64 = xorshift_u64(minimizers[i]);
             let start_pos: usize = super_kmers_positions[i] as usize;

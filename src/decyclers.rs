@@ -11,7 +11,7 @@ use packed_seq::{PackedSeq, Seq};
 const CYCLER_BLOCK_SIZE: usize = 1; //just always keep it a power of 2
 
 pub struct Decycler {
-    m: u16, //minimizer length
+    pub m: u16, //minimizer length
     pub direct_list: Vec<Vec<u64>>, //stores in "booleans" if a string is a direct decycling minimizer
                                 //based on its address
     //indirect_lit, to add

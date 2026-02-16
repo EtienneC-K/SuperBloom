@@ -14,7 +14,7 @@ pub mod super_bitvec;
 pub mod minimizers;
 
 use input::{read_fof, read_fasta, Hell};
-use minimizers::{decycling_mins_x_pos};
+use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
@@ -117,6 +117,10 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     auto_bench: bool,
 
+    ///enables using simd_minimizer instead of any weird thing i cooked up myself
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    simd_minimizer: bool,
+
 }
 
 pub fn main() {
@@ -202,10 +206,16 @@ pub fn main() {
     let hash_table = CountTable::new(table_size, table_block_size);
 
     //calculating decycling sets as well as its time
+    let mut duration_overhead_decycling: Duration;
+    let mut decycler_set: Decycler;
     let debut = Instant::now();
-    let mut decycler_set = Decycler::new(m);
-    decycler_set.compute_blocks();
-    let duration_overhead_decycling = debut.elapsed();
+    if !args.simd_minimizer {
+        decycler_set = Decycler::new(m);
+        decycler_set.compute_blocks();
+    } else {
+        decycler_set = Decycler::new(1);
+    }
+    duration_overhead_decycling = debut.elapsed();
 
     if !args.auto_bench {
         println!("Decycling set calculation time : {}", duration_overhead_decycling.as_secs());
@@ -403,7 +413,7 @@ pub fn main() {
 fn handle_sequence(
     bloom: &BloomFilter,
     hash_table: &CountTable,
-    sequence: PackedSeqVec,
+    original_sequence: PackedSeqVec,
     k: u16,
     m: u16,
     nb_blocks: usize,
@@ -413,13 +423,21 @@ fn handle_sequence(
     all_addresses: &mut Vec<usize>,
     decycler_set: &Decycler,
     ) -> u64 {
-    if sequence.len() <= k as usize+2 {
+    if original_sequence.len() <= k as usize+2 {
         return 0;
     }
     let address_mask: usize = bloom.block_size-1;
     let mut local_kmer_sum: u64 = 0;
-    let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
-                                            = decycling_mins_x_pos(sequence, k, m, decycler_set);
+    let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec);
+    if decycler_set.m > 1 {
+        //we use the decycler
+        (super_kmers_positions, minimizer_values, sequence) =
+            decycling_mins_x_pos(original_sequence, k, m, decycler_set);
+    } else {
+        //we use simd_minimizer
+        (super_kmers_positions, minimizer_values, sequence) =
+            minimizers_x_positions(original_sequence, k, m);
+    }
     //let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
     //                                                = minimizers_x_positions(sequence, k, m);
 
