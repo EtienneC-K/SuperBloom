@@ -90,10 +90,11 @@ impl BloomFilter {
 
     ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
     ///returns : count of non epty blocks, max filled count, median filled count, avrg filled count
-    pub fn count_it_all(&self) -> (usize, usize, usize, usize) {
+    pub fn count_it_all(&self) -> (usize, usize, usize, usize, usize) {
         //first make a list with all non zero rates
         let counts_list: Mutex<Vec<usize>> = Mutex::new(Vec::new());
         let total_counter: Mutex<usize> = Mutex::new(0);
+        let filled_counter: Mutex<usize> = Mutex::new(0);
         let _ = &self.filter.iter().par_bridge().for_each(|block| {
             let unlocked_block = block.lock().unwrap(); //its a Vec<BitVec>
             for bit_vector in unlocked_block.deref() {
@@ -111,6 +112,15 @@ impl BloomFilter {
                     *el_counter = el_counter.saturating_add(counter);
                     drop(el_counter)
                 }
+                //TODO
+                //add a counter of blocks filled above a certain threshhold
+                let threshhold: f64 = 0.9;
+                if counter as f64/self.block_size as f64 > threshhold {
+                    //let mut el_filled_counter = filled_counter.lock().unwrap();
+                    let mut el_filled_counter = filled_counter.lock().unwrap();
+                    *el_filled_counter = el_filled_counter.saturating_add(1);
+                    drop(el_filled_counter);
+                }
             }
         });
 
@@ -123,8 +133,9 @@ impl BloomFilter {
         let max_counter: usize = unlocked_counts_list[unlocked_counts_list.len()-1];
         let median_counter: usize = unlocked_counts_list[unlocked_counts_list.len()/2 - 1];
         let average_counter: usize = *total_counter.lock().unwrap()/unlocked_counts_list.len();
+        let filled_count = *filled_counter.lock().unwrap();
 
-        (non_zero_counters, max_counter, median_counter, average_counter)
+        (non_zero_counters, max_counter, median_counter, average_counter, filled_count)
     }
 
     ///checks the false negative and false positive counts of the bloom filter

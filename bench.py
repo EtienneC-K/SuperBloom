@@ -192,6 +192,7 @@ def write_transitional_header(data):
         "max block fill",
         "average fill",
         "median fill",
+        "overfilled rate",
         "",
         "hash table non zeros",
         "max block fill",
@@ -495,7 +496,7 @@ def parse_counted(count_output):
     data_line = data_line.split("|")
     return_list = []
     print("printing all the data bits")
-    for i in range(11):
+    for i in range(12):
         #main use of this loop is to check the length of data_line, ie if no errors in bloomybloom
         data_bit = data_line[i]
         data_bit = data_bit[0:6]

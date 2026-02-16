@@ -278,7 +278,7 @@ pub fn main() {
                     let local_kmer_sum =
                         handle_sequence(&bloom, &hash_table, sequence, k, m, nb_blocks,
                         one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set);
-                    if !no_bloom {
+                    if no_bloom {
                         let mut total_sum = kmer_sum.lock().unwrap();
                         *total_sum = total_sum.wrapping_add(local_kmer_sum);
                         drop(total_sum);
@@ -357,17 +357,19 @@ pub fn main() {
         if args.counting {
 
             if !no_bloom {
-                let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+                let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = bloom.count_it_all();
                 let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
                 let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
                 let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
                 let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
+                let overfilled_rate: f64 = fill_counter as f64/nb_blocks as f64;
 
                 println!("Non zero bf amount : {n_z_bloom}");
                 println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
                 println!("Max bloom fill rate : {max_bloom_rate}");
                 println!("Median fill rate : {median_bloom_rate}");
                 println!("Average fill rate : {average_bloom_rate}");
+                println!("Overfilled rate : {overfilled_rate}");
             }
 
             println!("");
@@ -414,6 +416,7 @@ fn handle_sequence(
     if sequence.len() <= k as usize+2 {
         return 0;
     }
+    let address_mask: usize = bloom.block_size-1;
     let mut local_kmer_sum: u64 = 0;
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
                                             = decycling_mins_x_pos(sequence, k, m, decycler_set);
@@ -448,7 +451,7 @@ fn handle_sequence(
             kmer_number = 
                 handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
                 bloom, hash_table, k, hashed_minimizer, kmer_number,
-                no_hashtable, all_addresses);
+                no_hashtable, all_addresses, address_mask);
         }
     }
     //pas oublier le dernier morceau de la liste a évaluer maintenant
@@ -467,7 +470,7 @@ fn handle_sequence(
             (sequence.len()+1-k as usize) as u32,
             &sequence, 
             bloom, hash_table, k, hashed_minimizer,
-            kmer_number, no_hashtable, all_addresses);
+            kmer_number, no_hashtable, all_addresses, address_mask);
     }
 
     //is here only to prevent optimisations in case no bloom filters
@@ -478,7 +481,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     bloom: &BloomFilter, 
     _hash_table: &CountTable, 
     k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>) -> usize {
+    mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
+    address_mask: usize) -> usize {
     //start by securing the mutex block
     //let mut all_addresses: Vec<usize> = 
     //    Vec::new();
@@ -493,7 +497,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
         for _i in 0..bloom.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
-            let address = hash as usize%bloom.block_size;
+            let address = hash as usize & address_mask;
+            //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
             hash = xorshift_u64(hash);
@@ -538,14 +543,15 @@ fn write_auto_bench_stdout(
     //writes every number looked for by the benchmark programm in a single line
     //also does all the counting
     if !no_bloom {
-        let (n_z_bloom, max_bloom, median_bloom, average_bloom) = bloom.count_it_all();
+        let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = bloom.count_it_all();
         let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
         let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
         let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
         let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
+        let overfilled_rate: f64 = fill_counter as f64/nb_blocks as f64;
 
         print_string += 
-            &format!("{n_z_bloom_rate}|{max_bloom_rate}|{average_bloom_rate}|{median_bloom_rate}");
+            &format!("{n_z_bloom_rate}|{max_bloom_rate}|{average_bloom_rate}|{median_bloom_rate}|{overfilled_rate}");
     } else {
         print_string += &format!("0|0|0|0");
     }
