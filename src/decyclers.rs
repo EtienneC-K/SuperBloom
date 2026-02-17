@@ -24,7 +24,7 @@ impl Decycler {
 
     ///initialization, creating enough space for all the minimizers
     pub fn new(m: u16) -> Self {
-        let direct_list: Vec<Vec<u64>> = vec![vec![0; CYCLER_BLOCK_SIZE]; (1<<(2*m))/(64*CYCLER_BLOCK_SIZE)];
+        let direct_list: Vec<Vec<u64>> = vec![vec![0; CYCLER_BLOCK_SIZE]; (1<<(2*m))>>CYCLER_BLOCK_SHIFTER];
         init_vec_ci(m);
         Self {
             m,
