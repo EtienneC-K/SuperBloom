@@ -7,8 +7,11 @@ use rayon::prelude::*;
 //use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use packed_seq::{PackedSeq, Seq};
 
-//const CYCLER_BLOCK_SIZE: usize = 512; //just always keep it a power of 2
-const CYCLER_BLOCK_SIZE: usize = 1; //just always keep it a power of 2
+const CYCLER_BLOCK_SIZE: usize = 512; //just always keep it a power of 2
+const CYCLER_BLOCK_MASK_MULT_64: usize = 64*CYCLER_BLOCK_SIZE-1;
+const CYCLER_BLOCK_SHIFTER: usize = 15;
+
+//const CYCLER_BLOCK_SIZE: usize = 1; //just always keep it a power of 2
 
 pub struct Decycler {
     pub m: u16, //minimizer length
@@ -43,15 +46,21 @@ impl Decycler {
         let address = minimizer.as_u64() as usize;
 
         //finnding the block
-        let block_adress: usize = address/(CYCLER_BLOCK_SIZE*64);
+        //let block_adress: usize = address/(CYCLER_BLOCK_SIZE*64);
+        //REMOVED MODULO
+        let block_adress: usize = address >> CYCLER_BLOCK_SHIFTER;
         let block = &self.direct_list[block_adress];
 
         //lookup the corresponding u64
-        let integer_adress: usize = (address%(CYCLER_BLOCK_SIZE*64))/64;
+        //let integer_adress: usize = (address%(CYCLER_BLOCK_SIZE*64))/64;
+        //REMOVED MODULO
+        let integer_adress: usize = (address&(CYCLER_BLOCK_MASK_MULT_64))>>6;
         let integer: u64 = block[integer_adress];
 
         //reading the correct bit using bitshifting
-        let boolean: bool = if (integer>>(63-address%64))%2 == 1 {true} else {false};
+        //let boolean: bool = if (integer>>(63-address%64))%2 == 1 {true} else {false};
+        //REMOVED MODULO
+        let boolean: bool = if (integer>>(63-(address&63)))&1 == 1 {true} else {false};
 
         //return
         boolean
@@ -86,8 +95,9 @@ pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
     let mut imaginary_x: f64 = 0.0; 
     let mut imaginary_x_prime: f64 = 0.0;
     for i in 0..m {
-        //let x_i: u64 = (kmer>>(2*(m-i-1)))%4;
-        let x_i: u64 = (kmer>>(2*i))%4;
+        //let x_i: u64 = (kmer>>(2*i))%4;
+        //REMOVED MODULO
+        let x_i: u64 = (kmer>>(2*i))&3;
         imaginary_x += vec_ci[i as usize]*x_i as f64;
         let i_prime: usize = if i<m-1 {i as usize+1} else {0};
         imaginary_x_prime += vec_ci[i_prime]*x_i as f64;
@@ -102,8 +112,9 @@ pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
         if imaginary_x_prime >= -epsilon && imaginary_x_prime <= epsilon {
             let mut k: u16 = 0;
             for l in 0..2*m {
-                let x_l_mod_m: u64 = (kmer>>(2*(m-(l%m)-1)))%4;
-                let x_k: u64 = (kmer>>(2*(m-k-1)))%4;
+                //REMOVED MODULO
+                let x_l_mod_m: u64 = (kmer>>(2*(m-(l%m)-1)))&3;
+                let x_k: u64 = (kmer>>(2*(m-k-1)))&3;
                 if x_l_mod_m < x_k {return false};
                 if x_l_mod_m > x_k {k = 0} else {k += 1};
                 if (l >= m-1) && (k%m == 0) {return true};

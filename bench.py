@@ -505,9 +505,9 @@ def parse_counted(count_output):
 
     #no to insert spaces in the list to align the columns
     return_list.insert(0, "")
-    return_list.insert(5, "")
-    return_list.insert(10, "")
-    return_list.insert(13, "")
+    return_list.insert(6, "")
+    return_list.insert(11, "")
+    return_list.insert(14, "")
 
     return return_list
 

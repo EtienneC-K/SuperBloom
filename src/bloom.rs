@@ -22,6 +22,7 @@ pub struct BloomFilter {
     pub block_size: usize,
     pub nb_blocks: usize,
     pub n_hashes: usize,
+    block_size_mask: usize,
 }
 
 impl BloomFilter {
@@ -43,6 +44,7 @@ impl BloomFilter {
             block_size,
             nb_blocks,
             n_hashes,
+            block_size_mask: block_size-1,
         }
     }
 
@@ -116,7 +118,6 @@ impl BloomFilter {
                 //add a counter of blocks filled above a certain threshhold
                 let threshhold: f64 = 0.9;
                 if counter as f64/self.block_size as f64 > threshhold {
-                    //let mut el_filled_counter = filled_counter.lock().unwrap();
                     let mut el_filled_counter = filled_counter.lock().unwrap();
                     *el_filled_counter = el_filled_counter.saturating_add(1);
                     drop(el_filled_counter);
@@ -215,6 +216,7 @@ impl BloomFilter {
     fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
         let mut count_true: usize = 0;
         let mut count_false: usize = 0;
+        let address_mask = (self.nb_blocks-1)>>10;
         //must get the minimizer here, as its not just provided
         //let (super_kmers_positions, minimizers, quence) = minimizers_x_positions(sequence, k, m);
 
@@ -239,7 +241,9 @@ impl BloomFilter {
                                     else {super_kmers_positions[i+1] as usize};
             //must compute the subblock by ourselves, its not furnished this time around
             let blocknum: usize = (hashed_minimizer as usize)%1024;
-            let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
+            //let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
+            //REMOVED MODULO
+            let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
             let mut block = self.filter[blocknum].lock().unwrap();
             let subblock = &mut block[subblocknum];
 
@@ -263,7 +267,9 @@ impl BloomFilter {
         for _i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
-            let address = hash as usize%self.block_size;
+            //let address = hash as usize%self.block_size;
+            //REMOVED MODULO
+            let address = hash as usize&self.block_size_mask;
             if !subblock.get(address) {
                 return false
             }

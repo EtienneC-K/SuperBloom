@@ -274,7 +274,7 @@ pub fn main() {
                 let sequence = PackedSeqVec::from_ascii(&line);
 
                 //roll a dice to add to the false negatives checker
-                let dice_roll = rand::rng().random_range(0..1000);
+                let dice_roll = rand::rng().random_range(0..5000);
                 if dice_roll == 0 {
                     let mut false_negs = false_neg_list.lock().unwrap();
                     false_negs.push(sequence.clone());
@@ -372,7 +372,7 @@ pub fn main() {
                 let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
                 let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
                 let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-                let overfilled_rate: f64 = fill_counter as f64/nb_blocks as f64;
+                let overfilled_rate: f64 = fill_counter as f64/n_z_bloom as f64;
 
                 println!("Non zero bf amount : {n_z_bloom}");
                 println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
@@ -457,9 +457,11 @@ fn handle_sequence(
         //removing it doesn't break anything later
         let hashed_minimizer: u64;
         if one_to_one {
-            hashed_minimizer = minimizer_values[i]%(nb_blocks as u64);
+            //REMOVED MODULO
+            hashed_minimizer = minimizer_values[i]&(nb_blocks as u64-1);
         } else {
-            hashed_minimizer = xorshift_u64(minimizer_values[i])%(nb_blocks as u64);
+            //REMOVED MODULO
+            hashed_minimizer = xorshift_u64(minimizer_values[i])&(nb_blocks as u64-1);
         }
         //cf magnifique dessin de quels kmers appartienent à quel super_kmer
         if no_bloom {
@@ -475,9 +477,11 @@ fn handle_sequence(
     //pas oublier le dernier morceau de la liste a évaluer maintenant
     let hashed_minimizer: u64;
     if one_to_one {
-        hashed_minimizer = minimizer_values[minimizer_values.len()-1]%(nb_blocks as u64);
+        //REMOVED MODULO
+        hashed_minimizer = minimizer_values[minimizer_values.len()-1]&(nb_blocks as u64-1);
     } else {
-        hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])%(nb_blocks as u64);
+        //REMOVED MODULO
+        hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])&(nb_blocks as u64-1);
     }
     if no_bloom {
         //prevent optims
@@ -530,8 +534,10 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     }
     let relevant_addresses = &mut all_addresses[..last_relevant_index];
     //relevant_addresses.sort_unstable();
-    let blocknum: usize = (hashed_minimizer as usize)%1024;
-    let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(bloom.nb_blocks/1024);
+    //REMOVED MODULO
+    let blocknum: usize = (hashed_minimizer as usize)&1023;
+    //REMOVED MODULO
+    let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
     let subblock = &mut block[subblocknum];
     for address in relevant_addresses {
@@ -566,7 +572,7 @@ fn write_auto_bench_stdout(
         let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
         let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
         let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-        let overfilled_rate: f64 = fill_counter as f64/nb_blocks as f64;
+        let overfilled_rate: f64 = fill_counter as f64/n_z_bloom as f64;
 
         print_string += 
             &format!("{n_z_bloom_rate}|{max_bloom_rate}|{average_bloom_rate}|{median_bloom_rate}|{overfilled_rate}");
