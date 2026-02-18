@@ -52,13 +52,13 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
 
     //start by making an index to know if theyre in the decycling set
     let mut is_decycler: Vec<bool> = Vec::with_capacity(packed_seq.len()-m as usize+1);
-    //let vec_ci = init_vec_ci(m);
+    let vec_ci = init_vec_ci(m);
     for i in 0..packed_seq.len()-m as usize+1 {
-        is_decycler.push(decycler_set.lookup(packed_seq.slice(i..i+m as usize)));
+        //is_decycler.push(decycler_set.lookup(packed_seq.slice(i..i+m as usize)));
         //
         //checking if on the fly calculations are faster than cache misses although i dont
         //believe it one bit
-        //is_decycler.push(compute_membership(packed_seq.slice(i..i+m as usize).as_u64(), m, &vec_ci));
+        is_decycler.push(compute_membership(packed_seq.slice(i..i+m as usize).as_u64(), m, &vec_ci));
     }
 
     let mut mini_addrs: Vec<usize> = Vec::with_capacity(packed_seq.len()-k as usize+1);

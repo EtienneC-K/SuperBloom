@@ -413,7 +413,7 @@ def launch_and_collect(input_file, options):
     """launches bloomybloom twice, first time collects the times and such, second time collets fillings"""
     executable_path = "./target/release/bloomybloom"
     timed_results = None
-    counted_results = None
+    counted_results = []
 
     command = f"\\time {executable_path} {options} {input_file}"
     print(f"full command : {command}")
@@ -435,15 +435,15 @@ def launch_and_collect(input_file, options):
     accuracy = str(round(100-accuracy*100, 1)) + "%" #formatting it before writting
 
     #now for the counting version
-    options += " --counting --auto-bench"
-    command = f"{executable_path} {options} {input_file}"
-    try :
-        compelted_counted_run = subprocess.run(command, shell = True, capture_output = True)
-        counted_results = parse_counted(compelted_counted_run.stdout)
-    except Exception as e :
-        print("Bloomybloom (counting) problem :")
-        print(e)
-        counted_results = ["Failed"]*8
+    #options += " --counting --auto-bench"
+    #command = f"{executable_path} {options} {input_file}"
+    #try :
+    #    compelted_counted_run = subprocess.run(command, shell = True, capture_output = True)
+    #    counted_results = parse_counted(compelted_counted_run.stdout)
+    #except Exception as e :
+    #    print("Bloomybloom (counting) problem :")
+    #    print(e)
+    #    counted_results = ["Failed"]*8
 
 
 

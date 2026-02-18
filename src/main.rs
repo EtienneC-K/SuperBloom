@@ -12,6 +12,7 @@ mod unit_tests_one_day;
 pub mod decyclers;
 pub mod super_bitvec;
 pub mod minimizers;
+pub mod complex;
 
 use input::{read_fof, read_fasta, Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
@@ -20,6 +21,7 @@ use decyclers::{Decycler};
 use bloom::BloomFilter;
 use counter::{CountTable};
 use utils::{xorshift_u64};
+use complex::{Complex};
 use output::{write_output};
 //use unit_tests_one_day::{all_mins_size_3};
 //use seq_hash::{KmerHasher};
@@ -211,7 +213,7 @@ pub fn main() {
     let debut = Instant::now();
     if !args.simd_minimizer {
         decycler_set = Decycler::new(m);
-        decycler_set.compute_blocks();
+        //decycler_set.compute_blocks();
     } else {
         decycler_set = Decycler::new(1);
     }
