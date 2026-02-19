@@ -169,6 +169,14 @@ pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<Complex>) -> bool {
             return true
         }
     }
+    //now check for the double decycler
+    if center_of_mass.b > epsilon {
+        //we re rotate it back
+        center_of_mass.mult(&vec_ci[vec_ci.len()-1]);
+        if center_of_mass.b < -epsilon {
+            return true
+        }
+    }
     false
 }
 

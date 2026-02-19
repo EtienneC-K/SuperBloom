@@ -57,18 +57,20 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
                                                 packed_seq.slice(0..m as usize).as_u64(),
                                                 m,
                                                 &vec_ci);
+    //TODO rolling is_decycler variable
     is_decycler.push(is_decyc);
     for i in 1..packed_seq.len()-m as usize+1 {
-        //is_decycler.push(decycler_set.lookup(packed_seq.slice(i..i+m as usize)));
+        is_decycler.push(decycler_set.lookup(packed_seq.slice(i..i+m as usize)));
         //
         //checking if on the fly calculations are faster than cache misses although i dont
         //believe it one bit
-        is_decycler.push(roll_decycler(
-                    packed_seq.slice(i..i+1).as_u64(),
-                    packed_seq.slice(i+m as usize-1..i+m as usize).as_u64(),
-                    &mut center_of_mass,
-                    &vec_ci,)
-                );
+        //is_decycler.push(roll_decycler(
+
+        //            packed_seq.slice(i..i+1).as_u64(),
+        //            packed_seq.slice(i+m as usize-1..i+m as usize).as_u64(),
+        //            &mut center_of_mass,
+        //            &vec_ci,)
+        //        );
     }
 
     let mut mini_addrs: Vec<usize> = Vec::with_capacity(packed_seq.len()-k as usize+1);

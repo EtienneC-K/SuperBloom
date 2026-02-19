@@ -412,38 +412,38 @@ def update_options(data, threads, size, block_size, ht_size, ht_block_size, no_h
 def launch_and_collect(input_file, options):
     """launches bloomybloom twice, first time collects the times and such, second time collets fillings"""
     executable_path = "./target/release/bloomybloom"
-    timed_results = None
+    timed_results = []
     counted_results = []
 
     command = f"\\time {executable_path} {options} {input_file}"
     print(f"full command : {command}")
-    try :
-        completed_timed_run = subprocess.run(command, shell = True, capture_output = True)
-        timed_results = parse_backslash_time(completed_timed_run.stderr)
-        timed_results.insert(0, "")
-        timed_results.insert(5, "")
-    except Exception as e :
-        print("Bloomybloom problem")
-        print(f"Option set : {options}")
-        print(f"full command : {command}")
-        print(e)
-        timed_results = ["Failed"]*8
+    #try :
+    #    completed_timed_run = subprocess.run(command, shell = True, capture_output = True)
+    #    timed_results = parse_backslash_time(completed_timed_run.stderr)
+    #    timed_results.insert(0, "")
+    #    timed_results.insert(5, "")
+    #except Exception as e :
+    #    print("Bloomybloom problem")
+    #    print(f"Option set : {options}")
+    #    print(f"full command : {command}")
+    #    print(e)
+    #    timed_results = ["Failed"]*8
 
     #we check the accuracy after the normal run, by comparing the results to gerbils histogram
-    accuracy, skips = 0, 0 #no arguments since output files paths are constant
-    print(f"thats what i get for inaccuracy : {accuracy}")
-    accuracy = str(round(100-accuracy*100, 1)) + "%" #formatting it before writting
+    #accuracy, skips = 0, 0 #no arguments since output files paths are constant
+    #print(f"thats what i get for inaccuracy : {accuracy}")
+    #accuracy = str(round(100-accuracy*100, 1)) + "%" #formatting it before writting
 
     #now for the counting version
-    #options += " --counting --auto-bench"
-    #command = f"{executable_path} {options} {input_file}"
-    #try :
-    #    compelted_counted_run = subprocess.run(command, shell = True, capture_output = True)
-    #    counted_results = parse_counted(compelted_counted_run.stdout)
-    #except Exception as e :
-    #    print("Bloomybloom (counting) problem :")
-    #    print(e)
-    #    counted_results = ["Failed"]*8
+    options += " --counting --auto-bench"
+    command = f"{executable_path} {options} {input_file}"
+    try :
+        compelted_counted_run = subprocess.run(command, shell = True, capture_output = True)
+        counted_results = parse_counted(compelted_counted_run.stdout)
+    except Exception as e :
+        print("Bloomybloom (counting) problem :")
+        print(e)
+        counted_results = ["Failed"]*8
 
 
 
