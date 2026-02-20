@@ -163,8 +163,14 @@ impl BloomFilter {
         let mut total_count: usize = 0;
         for sequence in to_check {
             total_count += sequence.len()-(k as usize)+1;
-            let (_count_true, count_false) = self.check_sequence(sequence, k, m, decycler_set);
+            let (_count_true, count_false): (usize, usize);
+            if k <= 31 {
+                (_count_true, count_false) = self.check_sequence(sequence, k, m, decycler_set);
+            } else {
+                (_count_true, count_false) = self.check_sequence_u128(sequence, k, m, decycler_set);
+            }
             //false_negative_count += sequence.len()-(k as usize)+1-self.check_sequence(sequence, k, m);
+            //let _count_true, count_false: 
             false_negative_count += count_false;
         }
         let false_proportion: f64 = false_negative_count as f64/total_count as f64;
@@ -205,7 +211,12 @@ impl BloomFilter {
         let sequence: PackedSeqVec = PackedSeqVec::from_ascii(seq.as_bytes());
 
         //now to check false positives
-        let (count_true, _) = self.check_sequence(sequence, k, m, decycler_set);
+        let (count_true, _count_false): (usize, usize);
+        if k <= 31 {
+            (count_true, _count_false) = self.check_sequence(sequence, k, m, decycler_set);
+        } else {
+            (count_true, _count_false) = self.check_sequence_u128(sequence, k, m, decycler_set);
+        }
 
         count_true
     }
@@ -277,6 +288,74 @@ impl BloomFilter {
         }
         true
     }
+
+    fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
+        let mut count_true: usize = 0;
+        let mut count_false: usize = 0;
+        let address_mask = (self.nb_blocks-1)>>10;
+        //must get the minimizer here, as its not just provided
+        //let (super_kmers_positions, minimizers, quence) = minimizers_x_positions(sequence, k, m);
+
+
+        let (super_kmers_positions, minimizers, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec);
+        if decycler_set.m > 1 {
+            //we use the decycler
+            (super_kmers_positions, minimizers, sequence) =
+                decycling_mins_x_pos(original_sequence, k, m, decycler_set);
+        } else {
+            //we use simd_minimizer
+            (super_kmers_positions, minimizers, sequence) =
+                minimizers_x_positions(original_sequence, k, m);
+        }
+
+
+        //let (super_kmers_positions, minimizers, sequence) = decycling_mins_x_pos(sequence, k, m, decycler_set);
+        for i in 0..super_kmers_positions.len() {
+            let hashed_minimizer: u64 = xorshift_u64(minimizers[i]);
+            let start_pos: usize = super_kmers_positions[i] as usize;
+            let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize} 
+                                    else {super_kmers_positions[i+1] as usize};
+            //must compute the subblock by ourselves, its not furnished this time around
+            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            //let subblocknum: usize = ((hashed_minimizer as usize)/1024)%(self.nb_blocks/1024);
+            //REMOVED MODULO
+            let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
+            let mut block = self.filter[blocknum].lock().unwrap();
+            let subblock = &mut block[subblocknum];
+
+            for j in start_pos..end_pos {
+                let kmer: PackedSeq = sequence.slice(j..j+k as usize);
+                let hash: u128 = xorshift_u128(kmer.as_u128());
+                let present: bool = self.check_kmer_u128(subblock, hash);
+                if present {
+                    count_true += 1;
+                } else {
+                    count_false +=1;
+                }
+            }
+        }
+        (count_true, count_false)
+    }
+
+    ///checks if a kmer is present
+    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, mut hash: u128) -> bool {
+
+        for _i in 0..self.n_hashes {
+            //to get the address, heavy bits are from the minimizer (giving the block)
+            //and light bits are given by the hash of the kmer himself
+            //let address = hash as usize%self.block_size;
+            //REMOVED MODULO
+            let address = hash as usize&self.block_size_mask;
+            if !subblock.get(address) {
+                return false
+            }
+            hash = xorshift_u128(hash);
+        }
+        true
+    }
+
+
+
 }
 
 
@@ -293,5 +372,13 @@ fn xorshift_u64(mut x: u64) -> u64 {
     x ^= x<<13;
     x ^= x>>7;
     x ^= x<<17;
+    x
+}
+
+///since no implementation directly on u128 exists, I just used whatever numbers of shifts
+pub fn xorshift_u128(mut x: u128) -> u128 {
+    x ^= x << 17;
+    x ^= x >> 23;
+    x ^= x << 5;
     x
 }

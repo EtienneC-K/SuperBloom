@@ -19,7 +19,7 @@ use decyclers::{Decycler};
 //use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
 use counter::{CountTable};
-use utils::{xorshift_u64};
+use utils::{xorshift_u64, xorshift_u128};
 use output::{write_output};
 //use unit_tests_one_day::{all_mins_size_3};
 //use seq_hash::{KmerHasher};
@@ -52,7 +52,7 @@ struct Args {
     #[arg(short, long, default_value_t = 31)]
     k: u16,
 
-    ///length of the minimizers for grouping the kmers, has to be inferior to k
+    ///length of the minimizers for grouping the kmers, has to be inferior to k and inferior to 32
     #[arg(short, long, default_value_t = 11)]
     m: u16,
 
@@ -126,7 +126,7 @@ struct Args {
 pub fn main() {
     //for debug
     unsafe {
-        env::set_var("RUST_BACKTRACE", "1");
+        env::set_var("RUST_BACKTRACE", "full");
     }
     //defining all variables constants that are based on the argument input
     let args = Args::parse();
@@ -161,6 +161,12 @@ pub fn main() {
         table_block_size = 1;
     }
 
+    if k <= 31 && !args.auto_bench {
+        println!("we go with a small k");
+    } else if k <= 63 && !args.auto_bench {
+        println!("we go with a large k");
+    }
+    
     //number of threads allowed
     unsafe {
         env::set_var("RAYON_NUM_THREADS", args.threads);
@@ -468,10 +474,17 @@ fn handle_sequence(
             //prevent optims
             local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
         } else {
-            kmer_number = 
-                handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-                bloom, hash_table, k, hashed_minimizer, kmer_number,
-                no_hashtable, all_addresses, address_mask);
+            if k <= 31 {
+                kmer_number = 
+                    handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
+                    bloom, hash_table, k, hashed_minimizer, kmer_number,
+                    no_hashtable, all_addresses, address_mask);
+            } else {
+                kmer_number = 
+                    handle_super_kmer_u128(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
+                    bloom, hash_table, k, hashed_minimizer, kmer_number,
+                    no_hashtable, all_addresses, address_mask);
+            }
         }
     }
     //pas oublier le dernier morceau de la liste a évaluer maintenant
@@ -487,12 +500,21 @@ fn handle_sequence(
         //prevent optims
         local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
     } else {
-        let _ = 
-            handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
-            (sequence.len()+1-k as usize) as u32,
-            &sequence, 
-            bloom, hash_table, k, hashed_minimizer,
-            kmer_number, no_hashtable, all_addresses, address_mask);
+        if k <= 31 {
+            let _ = 
+                handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
+                (sequence.len()+1-k as usize) as u32,
+                &sequence, 
+                bloom, hash_table, k, hashed_minimizer,
+                kmer_number, no_hashtable, all_addresses, address_mask);
+        } else {
+            let _ = 
+                handle_super_kmer_u128(super_kmers_positions[super_kmers_positions.len()-1], 
+                (sequence.len()+1-k as usize) as u32,
+                &sequence, 
+                bloom, hash_table, k, hashed_minimizer,
+                kmer_number, no_hashtable, all_addresses, address_mask);
+        }
     }
 
     //is here only to prevent optimisations in case no bloom filters
@@ -548,6 +570,57 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     drop(block);
     kmer_number
 }
+
+fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
+    bloom: &BloomFilter, 
+    _hash_table: &CountTable, 
+    k: u16, hashed_minimizer: u64, 
+    mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
+    address_mask: usize) -> usize {
+    //start by securing the mutex block
+    //let mut all_addresses: Vec<usize> = 
+    //    Vec::new();
+        //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
+    let mut last_relevant_index: usize = 0;
+    for j in (start_pos as usize)..(end_pos as usize) {
+        let kmer: PackedSeq = sequence.slice(j..j+k as usize);
+        let mut hash: u128 = xorshift_u128(kmer.as_u128());
+
+
+        //let mut present = true;
+        for _i in 0..bloom.n_hashes {
+            //to get the address, heavy bits are from the minimizer (giving the block)
+            //and light bits are given by the hash of the kmer himself
+            let address = hash as usize & address_mask;
+            //let address = hash as usize%bloom.block_size;
+            all_addresses[last_relevant_index] = address;
+            last_relevant_index += 1;
+            hash = xorshift_u128(hash);
+        }
+
+        //let already_in = bloom.check_and_insert(subblock, last_hash);
+        //do_smth if it was already in, like adding it to a hash_table for counting
+        //problem with that : its gonna take an awful lot of space i think (it does)
+        kmer_number+=1;
+
+    }
+    let relevant_addresses = &mut all_addresses[..last_relevant_index];
+    //relevant_addresses.sort_unstable();
+    //REMOVED MODULO
+    let blocknum: usize = (hashed_minimizer as usize)&1023;
+    //REMOVED MODULO
+    let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
+    let mut block = bloom.filter[blocknum].lock().unwrap();
+    let subblock = &mut block[subblocknum];
+    for address in relevant_addresses {
+            if !subblock.get(*address) {
+                subblock.set(*address, true);
+            }
+    }
+    drop(block);
+    kmer_number
+}
+
 
 ///output function that requires local modules and is therefore written here
 fn write_auto_bench_stdout(
