@@ -260,8 +260,7 @@ impl BloomFilter {
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let hash: u64 = xorshift_u64(kmer.as_u64());
-                let present: bool = self.check_kmer(subblock, hash);
+                let present: bool = self.check_kmer(subblock, kmer);
                 if present {
                     count_true += 1;
                 } else {
@@ -273,18 +272,19 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer(&self, subblock: &mut SuperBitVec, mut hash: u64) -> bool {
+    fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq) -> bool {
 
-        for _i in 0..self.n_hashes {
+        for i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             //let address = hash as usize%self.block_size;
             //REMOVED MODULO
+            let lmer = kmer.slice(i..i+kmer.len()-self.n_hashes+1);
+            let hash = xorshift_u64(lmer.as_u64());
             let address = hash as usize&self.block_size_mask;
             if !subblock.get(address) {
                 return false
             }
-            hash = xorshift_u64(hash);
         }
         true
     }
@@ -325,8 +325,7 @@ impl BloomFilter {
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let hash: u128 = xorshift_u128(kmer.as_u128());
-                let present: bool = self.check_kmer_u128(subblock, hash);
+                let present: bool = self.check_kmer_u128(subblock, kmer);
                 if present {
                     count_true += 1;
                 } else {
@@ -338,18 +337,19 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, mut hash: u128) -> bool {
+    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq) -> bool {
 
-        for _i in 0..self.n_hashes {
+        for i in 0..self.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             //let address = hash as usize%self.block_size;
             //REMOVED MODULO
+            let lmer = kmer.slice(i..i+kmer.len()-self.n_hashes+1);
+            let hash = xorshift_u128(lmer.as_u128());
             let address = hash as usize&self.block_size_mask;
             if !subblock.get(address) {
                 return false
             }
-            hash = xorshift_u128(hash);
         }
         true
     }

@@ -533,19 +533,21 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
         //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) {
-        let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        let mut hash: u64 = xorshift_u64(kmer.as_u64());
+        //let kmer: PackedSeq = sequence.slice(j..j+k as usize);
+        //let mut hash: u64 = xorshift_u64(kmer.as_u64());
 
 
         //let mut present = true;
-        for _i in 0..bloom.n_hashes {
+        for i in 0..bloom.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
+            let lmer: PackedSeq = sequence.slice(j+i..j+k as usize+i - bloom.n_hashes+1);
+            let hash: u64 = xorshift_u64(lmer.as_u64());
             let address = hash as usize & address_mask;
             //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
-            hash = xorshift_u64(hash);
+            //hash = xorshift_u64(hash);
         }
 
         //let already_in = bloom.check_and_insert(subblock, last_hash);
@@ -583,19 +585,21 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
         //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) {
-        let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        let mut hash: u128 = xorshift_u128(kmer.as_u128());
+        //let kmer: PackedSeq = sequence.slice(j..j+k as usize);
+        //let mut hash: u128 = xorshift_u128(kmer.as_u128());
 
 
         //let mut present = true;
-        for _i in 0..bloom.n_hashes {
+        for i in 0..bloom.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
+            let lmer: PackedSeq = sequence.slice(j+i..j+k as usize+i - bloom.n_hashes+1);
+            let hash: u128 = xorshift_u128(lmer.as_u128());
             let address = hash as usize & address_mask;
             //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
-            hash = xorshift_u128(hash);
+            //hash = xorshift_u128(hash);
         }
 
         //let already_in = bloom.check_and_insert(subblock, last_hash);
