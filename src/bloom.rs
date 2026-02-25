@@ -140,9 +140,9 @@ impl BloomFilter {
     }
 
     ///checks the false negative and false positive counts of the bloom filter
-    pub fn count_false_bloom(&self, to_check: Vec<PackedSeqVec>, k: u16, m: u16, decycler_set: &Decycler) -> (f64, f64) {
-        let (false_negs, total_neg_tests, nb_seq_neg_tests) = self.count_false_negatives(to_check, k, m, decycler_set);
-        let false_pos = self.count_false_positives(k, m, total_neg_tests, nb_seq_neg_tests, decycler_set);
+    pub fn count_false_bloom(&self, to_check: Vec<PackedSeqVec>, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (f64, f64) {
+        let (false_negs, total_neg_tests, nb_seq_neg_tests) = self.count_false_negatives(to_check, k, m, l, decycler_set);
+        let false_pos = self.count_false_positives(k, m, l, total_neg_tests, nb_seq_neg_tests, decycler_set);
         (false_negs, false_pos)
     }
 
@@ -155,6 +155,7 @@ impl BloomFilter {
         to_check : Vec<PackedSeqVec>,
         k: u16,
         m: u16,
+        l: u16,
         decycler_set: &Decycler,
         ) -> (f64, usize, usize) {
         //start by checking for false negatives
@@ -164,10 +165,10 @@ impl BloomFilter {
         for sequence in to_check {
             total_count += sequence.len()-(k as usize)+1;
             let (_count_true, count_false): (usize, usize);
-            if k <= 31 {
-                (_count_true, count_false) = self.check_sequence(sequence, k, m, decycler_set);
+            if l <= 31 {
+                (_count_true, count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
             } else {
-                (_count_true, count_false) = self.check_sequence_u128(sequence, k, m, decycler_set);
+                (_count_true, count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
             }
             //false_negative_count += sequence.len()-(k as usize)+1-self.check_sequence(sequence, k, m);
             //let _count_true, count_false: 
@@ -180,7 +181,7 @@ impl BloomFilter {
     ///generates random kmers, that are therefore likely not supposed to be here, and counts how
     ///many return ase positive
     ///makes a number of test in the same order of magnitude as the amount of false negs checks
-    pub fn count_false_positives(&self, k: u16, m: u16, 
+    pub fn count_false_positives(&self, k: u16, m: u16, l: u16,
         total_false_negs: usize,
         nb_sequence_false_negs: usize,
         decycler_set: &Decycler,
@@ -189,7 +190,7 @@ impl BloomFilter {
         let mut total_false_pos: usize = 0;
         let avg_len: usize = total_false_negs/nb_sequence_false_negs;
         for _i in 0..nb_sequence_false_negs {
-            total_false_pos += self.make_n_check_sequence(k, m, avg_len, decycler_set);
+            total_false_pos += self.make_n_check_sequence(k, m, l, avg_len, decycler_set);
         }
 
         let false_pos_rate: f64 = 
@@ -198,7 +199,7 @@ impl BloomFilter {
     }
 
     ///generates a random sequence before counting false positives in it
-    fn make_n_check_sequence(&self, k: u16, m: u16, avg_len: usize, decycler_set: &Decycler) -> usize {
+    fn make_n_check_sequence(&self, k: u16, m: u16, l: u16, avg_len: usize, decycler_set: &Decycler) -> usize {
         //generate random sequence
         let mut rng = rand::rng();
         let mut seq: String = String::from("");
@@ -212,10 +213,10 @@ impl BloomFilter {
 
         //now to check false positives
         let (count_true, _count_false): (usize, usize);
-        if k <= 31 {
-            (count_true, _count_false) = self.check_sequence(sequence, k, m, decycler_set);
+        if l <= 31 {
+            (count_true, _count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
         } else {
-            (count_true, _count_false) = self.check_sequence_u128(sequence, k, m, decycler_set);
+            (count_true, _count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
         }
 
         count_true
@@ -224,7 +225,7 @@ impl BloomFilter {
     ///simply checks if a sequence of kmer is present or not, does no insertion and isn't thought to be suited
     ///for parallel operations, as only small checks at the end
     ///returns the number of present kmers from the sequence, as well as the number of absent ones
-    fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
+    fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
         let mut count_true: usize = 0;
         let mut count_false: usize = 0;
         let address_mask = (self.nb_blocks-1)>>10;
@@ -260,7 +261,7 @@ impl BloomFilter {
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer(subblock, kmer);
+                let present: bool = self.check_kmer(subblock, kmer, l);
                 if present {
                     count_true += 1;
                 } else {
@@ -272,24 +273,27 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq) -> bool {
+    fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, l: u16) -> bool {
 
-        for i in 0..self.n_hashes {
+        for i in 0..kmer.len()-l as usize +1 {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             //let address = hash as usize%self.block_size;
             //REMOVED MODULO
-            let lmer = kmer.slice(i..i+kmer.len()-self.n_hashes+1);
-            let hash = xorshift_u64(lmer.as_u64());
-            let address = hash as usize&self.block_size_mask;
-            if !subblock.get(address) {
-                return false
+            let lmer = kmer.slice(i..i+l as usize);
+            let mut hash = xorshift_u64(lmer.as_u64());
+            for _j in 0..self.n_hashes {
+                let address = hash as usize&self.block_size_mask;
+                if !subblock.get(address) {
+                    return false
+                }
+                hash = xorshift_u64(hash);
             }
         }
         true
     }
 
-    fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, decycler_set: &Decycler) -> (usize, usize) {
+    fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
         let mut count_true: usize = 0;
         let mut count_false: usize = 0;
         let address_mask = (self.nb_blocks-1)>>10;
@@ -325,7 +329,7 @@ impl BloomFilter {
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer_u128(subblock, kmer);
+                let present: bool = self.check_kmer_u128(subblock, kmer, l);
                 if present {
                     count_true += 1;
                 } else {
@@ -337,18 +341,21 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq) -> bool {
+    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, l: u16) -> bool {
 
-        for i in 0..self.n_hashes {
+        for i in 0..kmer.len()-l as usize+1 {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
             //let address = hash as usize%self.block_size;
             //REMOVED MODULO
-            let lmer = kmer.slice(i..i+kmer.len()-self.n_hashes+1);
-            let hash = xorshift_u128(lmer.as_u128());
-            let address = hash as usize&self.block_size_mask;
-            if !subblock.get(address) {
-                return false
+            let lmer = kmer.slice(i..i+l as usize);
+            let mut hash = xorshift_u128(lmer.as_u128());
+            for _j in 0..self.n_hashes {
+                let address = hash as usize&self.block_size_mask;
+                if !subblock.get(address) {
+                    return false
+                }
+                hash = xorshift_u128(hash);
             }
         }
         true

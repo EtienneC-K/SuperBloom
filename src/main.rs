@@ -56,6 +56,10 @@ struct Args {
     #[arg(short, long, default_value_t = 11)]
     m: u16,
 
+    ///length of the lmers, needs to be inferior or equal to k
+    #[arg(short, long, default_value_t = 31)]
+    l: u16,
+
     ///number of hashes for the bloom filter
     #[arg(short, long, default_value_t = 7)]
     n_hashes: usize,
@@ -132,6 +136,7 @@ pub fn main() {
     let args = Args::parse();
     let k: u16 = args.k;
     let m: u16 = args.m;
+    let l: u16 = args.l;
     let n_hashes: usize = args.n_hashes;
     let mut size: usize = 1<<args.size;
     let mut block_size:usize = 1<<args.block_size;
@@ -143,6 +148,8 @@ pub fn main() {
     let only_parse: bool = args.only_parse;
     let no_bloom: bool = args.no_bloom || args.only_parse;
     let no_hashtable: bool = args.no_hashtable || args.no_bloom || args.only_parse;
+
+    assert!(k >= l); //cant have the lmers be longer than the kmers
 
     //for the special case where i want to map 
     if one_to_one {
@@ -242,7 +249,7 @@ pub fn main() {
                 let sequence = read_fasta(line.to_string());
                 let local_kmer_sum =
                     handle_sequence(&bloom, &hash_table, sequence, k, m, nb_blocks, 
-                    one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set);
+                    one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set, l);
                 let mut total_sum = kmer_sum.lock().unwrap();
                 *total_sum = total_sum.wrapping_add(local_kmer_sum);
                 drop(total_sum);
@@ -293,7 +300,7 @@ pub fn main() {
                     //println!("{:?}", line);
                     let local_kmer_sum =
                         handle_sequence(&bloom, &hash_table, sequence, k, m, nb_blocks,
-                        one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set);
+                        one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set, l);
                     if no_bloom {
                         let mut total_sum = kmer_sum.lock().unwrap();
                         *total_sum = total_sum.wrapping_add(local_kmer_sum);
@@ -313,7 +320,7 @@ pub fn main() {
         panic!("Unrecognized input type, must be 0 or 1");
     }
     let false_negs = false_neg_list.lock().unwrap().to_vec();
-    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, &decycler_set);
+    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, l, &decycler_set);
     if !args.auto_bench {
         println!("false negative rate : {false_negative_rate}");
         println!("false positive rate : {false_positive_rate}");
@@ -428,6 +435,7 @@ fn handle_sequence(
     no_hashtable: bool,
     all_addresses: &mut Vec<usize>,
     decycler_set: &Decycler,
+    l: u16,
     ) -> u64 {
     if original_sequence.len() <= k as usize+2 {
         return 0;
@@ -474,16 +482,16 @@ fn handle_sequence(
             //prevent optims
             local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
         } else {
-            if k <= 31 {
+            if l <= 31 {
                 kmer_number = 
                     handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
                     bloom, hash_table, k, hashed_minimizer, kmer_number,
-                    no_hashtable, all_addresses, address_mask);
+                    no_hashtable, all_addresses, address_mask, l);
             } else {
                 kmer_number = 
                     handle_super_kmer_u128(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
                     bloom, hash_table, k, hashed_minimizer, kmer_number,
-                    no_hashtable, all_addresses, address_mask);
+                    no_hashtable, all_addresses, address_mask, l);
             }
         }
     }
@@ -500,20 +508,20 @@ fn handle_sequence(
         //prevent optims
         local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
     } else {
-        if k <= 31 {
+        if l <= 31 {
             let _ = 
                 handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
                 (sequence.len()+1-k as usize) as u32,
                 &sequence, 
                 bloom, hash_table, k, hashed_minimizer,
-                kmer_number, no_hashtable, all_addresses, address_mask);
+                kmer_number, no_hashtable, all_addresses, address_mask, l);
         } else {
             let _ = 
                 handle_super_kmer_u128(super_kmers_positions[super_kmers_positions.len()-1], 
                 (sequence.len()+1-k as usize) as u32,
-                &sequence, 
+                &sequence,
                 bloom, hash_table, k, hashed_minimizer,
-                kmer_number, no_hashtable, all_addresses, address_mask);
+                kmer_number, no_hashtable, all_addresses, address_mask, l);
         }
     }
 
@@ -526,28 +534,26 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     _hash_table: &CountTable, 
     k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
-    address_mask: usize) -> usize {
+    address_mask: usize, l: u16) -> usize {
     //start by securing the mutex block
     //let mut all_addresses: Vec<usize> = 
     //    Vec::new();
         //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
-    for j in (start_pos as usize)..(end_pos as usize) {
-        //let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        //let mut hash: u64 = xorshift_u64(kmer.as_u64());
+    for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize{
+        let lmer: PackedSeq = sequence.slice(j..j+l as usize);
+        let mut hash: u64 = xorshift_u64(lmer.as_u64());
 
 
         //let mut present = true;
-        for i in 0..bloom.n_hashes {
+        for _i in 0..bloom.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
-            let lmer: PackedSeq = sequence.slice(j+i..j+k as usize+i - bloom.n_hashes+1);
-            let hash: u64 = xorshift_u64(lmer.as_u64());
             let address = hash as usize & address_mask;
             //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
-            //hash = xorshift_u64(hash);
+            hash = xorshift_u64(hash);
         }
 
         //let already_in = bloom.check_and_insert(subblock, last_hash);
@@ -578,28 +584,26 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     _hash_table: &CountTable, 
     k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
-    address_mask: usize) -> usize {
+    address_mask: usize, l: u16) -> usize {
     //start by securing the mutex block
     //let mut all_addresses: Vec<usize> = 
     //    Vec::new();
         //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
-    for j in (start_pos as usize)..(end_pos as usize) {
-        //let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-        //let mut hash: u128 = xorshift_u128(kmer.as_u128());
+    for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize {
+        let lmer: PackedSeq = sequence.slice(j..j+l as usize);
+        let mut hash: u128 = xorshift_u128(lmer.as_u128());
 
 
         //let mut present = true;
-        for i in 0..bloom.n_hashes {
+        for _i in 0..bloom.n_hashes {
             //to get the address, heavy bits are from the minimizer (giving the block)
             //and light bits are given by the hash of the kmer himself
-            let lmer: PackedSeq = sequence.slice(j+i..j+k as usize+i - bloom.n_hashes+1);
-            let hash: u128 = xorshift_u128(lmer.as_u128());
             let address = hash as usize & address_mask;
             //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
-            //hash = xorshift_u128(hash);
+            hash = xorshift_u128(hash);
         }
 
         //let already_in = bloom.check_and_insert(subblock, last_hash);
