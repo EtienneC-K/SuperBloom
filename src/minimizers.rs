@@ -6,8 +6,6 @@ use crate::decyclers;
 use packed_seq::{PackedSeqVec, SeqVec, Seq, PackedSeq};
 use simd_minimizers::{canonical_minimizers};
 use decyclers::{Decycler, compute_membership, init_vec_ci};
-//use bitvec::prelude::*;
-//use seq_hash::{NtHasher};
 
 ///function that does all the job we're looking for here, with given kmer and word lengths
 ///also converts the packedseqvec to a bitvec to easily slice it later on
@@ -32,9 +30,7 @@ pub fn minimizers_x_positions(packed_seq: PackedSeqVec, k: u16, m: u16)
         .values_u64()
         .collect();
 
-    //(super_kmers, minimizer_vals)
     (super_kmers, minimizer_vals, packed_seq) //for when ill use the rolling part of rolling
-    //hashes again, but not yet
 }
 
 ///takes same input and returns same thing as minimizers_x_positions plus decycling sets slice, 
@@ -55,15 +51,10 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
     //let vec_ci = init_vec_ci(m);
     for i in 0..packed_seq.len()-m as usize+1 {
         is_decycler.push(decycler_set.lookup(packed_seq.slice(i..i+m as usize)));
-        //
-        //checking if on the fly calculations are faster than cache misses although i dont
-        //believe it one bit
-        //is_decycler.push(compute_membership(packed_seq.slice(i..i+m as usize).as_u64(), m, &vec_ci));
     }
 
     let mut mini_addrs: Vec<usize> = Vec::with_capacity(packed_seq.len()-k as usize+1);
     //do a max and a is_decyc var, and look for the minimums in each chunk
-    //
     //first look for the minimizer in the first kmer
     let (mut min_addr, mut is_decyc, mut min_lexic) = 
         mins_from_kmer(packed_seq.as_slice(), &is_decycler, 0, m, k);

@@ -29,9 +29,6 @@ impl SuperBitVec {
         }
 
         //compute which bit to insert
-        //let block_num: usize = address/64;
-        //let mut to_insert: u64 = 1<<(63-address%64) as u64; //trust the calculation
-        //REMOVED MODULO
         let block_num: usize = address>>6;
         let mut to_insert: u64 = 1<<(63-(address&63)) as u64; //trust the calculation
         if value == false {
@@ -48,15 +45,12 @@ impl SuperBitVec {
 
     ///getter for a certain bit
     pub fn get(&self, address: usize) -> bool {
-        //let block = self.vector[address/64];
-        //let boolean: bool = if (block>>(63-address%64))%2 == 1 {true} else {false};
-        //REMOVED MODULO
         let block = self.vector[address>>6];
         let boolean: bool = if (block>>(63-(address&63)))&1 == 1 {true} else {false};
         boolean
     }
 
-    ///len method cuz its used quite a bit
+    ///very standard len method
     pub fn len(&self) -> usize {
         self.size
     }
@@ -75,14 +69,10 @@ impl Display for SuperBitVec {
         //special case for the first block depends on the actual length of the SuperBitVec
         let mut to_write = String::new();
 
-        //let to_push: usize = if self.size%64==0 {0} else {64-self.size%64};
-        //REMOVED MODULO
         let to_push: usize = if self.size&63==0 {0} else {64-(self.size&63)};
         let first_block = self.vector[0] >> to_push;
         to_write += &format!("{:0width$b}", first_block, width = 64-to_push); 
 
-        //let last_block_number: usize = if self.size%64==0 {self.size/64} else {self.size/64+1};
-        //REMOVED MODULO
         let last_block_number: usize = if self.size&63==0 {self.size>>6} else {(self.size>>6)+1};
         for i in 1..(last_block_number) {
             to_write += &format!("{:064b}", self.vector[i]);

@@ -3,12 +3,11 @@
 //! k<31)
 
 mod input;
-//mod minimizers;
 mod bloom;
-mod utils;
 mod counter;
 mod output;
 mod unit_tests_one_day;
+pub mod utils;
 pub mod decyclers;
 pub mod super_bitvec;
 pub mod minimizers;
@@ -16,21 +15,14 @@ pub mod minimizers;
 use input::{read_fof, read_fasta, Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
-//use bloom::{BloomFilter, BLOCK_SIZE, NB_BLOCKS};
 use bloom::BloomFilter;
 use counter::{CountTable};
 use utils::{xorshift_u64, xorshift_u128};
 use output::{write_output};
-//use unit_tests_one_day::{all_mins_size_3};
-//use seq_hash::{KmerHasher};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
 use rayon::prelude::*;
 use clap::Parser;
-//use itertools::Itertools;
-//use std::io::BufReader;
-//use std::fs::File;
-//use std::io::BufRead;
 use std::sync::Mutex;
 use needletail::parse_fastx_file;
 use rand::Rng;
@@ -168,49 +160,11 @@ pub fn main() {
         table_block_size = 1;
     }
 
-    if k <= 31 && !args.auto_bench {
-        println!("we go with a small k");
-    } else if k <= 63 && !args.auto_bench {
-        println!("we go with a large k");
-    }
     
     //number of threads allowed
     unsafe {
         env::set_var("RAYON_NUM_THREADS", args.threads);
     }
-
-    //////DEBUGGING
-    //////////////////////////////////
-    //let mut test_decycler: Decycler = Decycler::new(11);
-    //test_decycler.compute_blocks();
-    //let to_look: PackedSeqVec = PackedSeqVec::from_ascii("AAAAAACAAAA".as_bytes());
-    //let toto = test_decycler.lookup(to_look.as_slice());
-    //println!("ca c'est mon toto : {toto}");
-    //let int_test: u64 = to_look.as_slice().as_u64();
-    //let membermember: bool = compute_membership(int_test, 11, &init_vec_ci(11));
-    //println!("et ca le membership calculé direct a la main : {membermember}");
-
-    //make that shit into a unit test with const BLOCKLENGTH of 1 instead of 512
-    //let mut small_decycler: Decycler = Decycler::new(3);
-    //small_decycler.compute_blocks();
-    //for i in 0..64 {
-    //    let trust_the_process: bool = compute_membership(i, 3, &init_vec_ci(3));
-    //    print!("{}", trust_the_process as u8);
-    //}
-    //println!("");
-    //let da_entier = small_decycler.direct_list[0][0];
-    //println!("{:#b}", da_entier);
-
-    //let lui_il_y_est: bool = small_decycler.lookup(PackedSeqVec::from_ascii("AAA".as_bytes()).as_slice());
-    //println!("et lui il y est : {lui_il_y_est}");
-    //println!("finished da debuggin part");
-    //all_mins_size_3();
-
-    //////////////////////////////////
-
-
-    //for now check of size awith the blocks, later only two of them will be specified
-    //assert!(size == BLOCK_SIZE*NB_BLOCKS, "Error on filter and block sizes, do not match.");
 
     let filename = args.input;
 
@@ -229,10 +183,6 @@ pub fn main() {
         decycler_set = Decycler::new(1);
     }
     duration_overhead_decycling = debut.elapsed();
-
-    if !args.auto_bench {
-        println!("Decycling set calculation time : {}", duration_overhead_decycling.as_secs());
-    }
 
     //anti optims variable
     let kmer_sum: Mutex<u64> = Mutex::new(0);
@@ -256,12 +206,7 @@ pub fn main() {
             }
         });
     } else if args.input_type == 1 {
-        //let file = File::open(filename).unwrap();
-        //let reader = BufReader::new(file);
-        //let lines = reader.lines();
-        //let mut reader = parse_fastx_file(&filename).expect("valid path/file");
         let reader = parse_fastx_file(&filename).expect("valid path/file");
-    
 
         let chunked_lines = Hell {
             fxreader : reader,
@@ -269,18 +214,12 @@ pub fn main() {
         };
 
         chunked_lines.par_bridge().for_each(|chunk| {
-        //reader.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
             let mut block_lines_counter: usize = 0;
 
             //to reduce number of created and destroyed vectors throughout
-            //let mut all_addresses: Vec<usize> = Vec::with_capacity(7*(2*(k-m) as usize));
             let mut all_addresses: Vec<usize> = vec![0; 7*(2*k-m) as usize];
 
             for line in chunk {
-                //let line = wrapped_line.expect("problem unwrapping a line from the multi fasta");
-                //if line.len() > k as usize 
-                //    && line.as_bytes()[0] != b'>' 
-                //    && line.as_bytes()[0] != b'@' {
                 // /!\/!\ assuming single line writing, so that each line corresponds to a
                 // sequence
                 //with this assumption make a packedseq from the sequence
@@ -332,22 +271,11 @@ pub fn main() {
     }
 
 
-    //for fasta_name in iter_files {
-    //    let sequence = read_fasta(fasta_name);
-    //    handle_fasta(&mut bloom, &mut hash_table, sequence, k, m, n_hashes, NB_BLOCKS);
-    //}
 
     //maintenant on s'occupe de la sortie et tout la
     let final_count: Vec<u64> = hash_table.calculate_output();
     let _ = write_output(&final_count);
 
-    //check des taux de remplissage
-    //let taux_bloom = bloom.check_true_bits();
-    //let proportion_bloom: f64 = (taux_bloom as f64)/(size as f64);
-    //let taux_ht = hash_table.check_filling();
-    //let proportion_ht: f64 = (taux_ht as f64)/(table_size as f64);
-    //println!("Remplissage du bloom {taux_bloom} ce qui représente une proportion de {proportion_bloom}");
-    //println!("Remplissage de la HT {taux_ht} ce qui représente une proportion de {proportion_ht}");
 
     //printing only a line for the benchmark evaluating programm if option --auto-bench if on
     if args.auto_bench {
@@ -451,17 +379,10 @@ fn handle_sequence(
         (super_kmers_positions, minimizer_values, sequence) =
             minimizers_x_positions(original_sequence, k, m);
     }
-    //let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec)
-    //                                                = minimizers_x_positions(sequence, k, m);
 
-    //super_kmers_positions, minimizer_values, sequence = minimizers_x_positions(sequence, k, m);
     //quick check that we don't have abherrent results
     assert!(super_kmers_positions.len()==minimizer_values.len(), 
         "Superkmers and minimizers have different length.");
-
-
-
-    //hasher for the minimizers, will probably be removed later on
 
     let mut kmer_number: usize = 0;
     //compute all hashes at once to g faster than computing them 1 by 1
@@ -470,13 +391,10 @@ fn handle_sequence(
         //removing it doesn't break anything later
         let hashed_minimizer: u64;
         if one_to_one {
-            //REMOVED MODULO
             hashed_minimizer = minimizer_values[i]&(nb_blocks as u64-1);
         } else {
-            //REMOVED MODULO
             hashed_minimizer = xorshift_u64(minimizer_values[i])&(nb_blocks as u64-1);
         }
-        //cf magnifique dessin de quels kmers appartienent à quel super_kmer
         if no_bloom {
             //prevent optims
             local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
@@ -494,13 +412,11 @@ fn handle_sequence(
             }
         }
     }
-    //pas oublier le dernier morceau de la liste a évaluer maintenant
+    //not forgetting the last element of the list
     let hashed_minimizer: u64;
     if one_to_one {
-        //REMOVED MODULO
         hashed_minimizer = minimizer_values[minimizer_values.len()-1]&(nb_blocks as u64-1);
     } else {
-        //REMOVED MODULO
         hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])&(nb_blocks as u64-1);
     }
     if no_bloom {
@@ -534,38 +450,24 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
     address_mask: usize, l: u16) -> usize {
-    //start by securing the mutex block
-    //let mut all_addresses: Vec<usize> = 
-    //    Vec::new();
-        //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize{
         let lmer: PackedSeq = sequence.slice(j..j+l as usize);
         let mut hash: u64 = xorshift_u64(lmer.as_u64());
 
 
-        //let mut present = true;
         for _i in 0..bloom.n_hashes {
-            //to get the address, heavy bits are from the minimizer (giving the block)
-            //and light bits are given by the hash of the kmer himself
             let address = hash as usize & address_mask;
-            //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
             hash = xorshift_u64(hash);
         }
 
-        //let already_in = bloom.check_and_insert(subblock, last_hash);
-        //do_smth if it was already in, like adding it to a hash_table for counting
-        //problem with that : its gonna take an awful lot of space i think (it does)
         kmer_number+=1;
 
     }
     let relevant_addresses = &mut all_addresses[..last_relevant_index];
-    //relevant_addresses.sort_unstable();
-    //REMOVED MODULO
     let blocknum: usize = (hashed_minimizer as usize)&1023;
-    //REMOVED MODULO
     let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
     let subblock = &mut block[subblocknum];
@@ -584,38 +486,24 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
     address_mask: usize, l: u16) -> usize {
-    //start by securing the mutex block
-    //let mut all_addresses: Vec<usize> = 
-    //    Vec::new();
-        //Vec::with_capacity(bloom.n_hashes*(end_pos-start_pos) as usize);
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize {
         let lmer: PackedSeq = sequence.slice(j..j+l as usize);
         let mut hash: u128 = xorshift_u128(lmer.as_u128());
 
 
-        //let mut present = true;
         for _i in 0..bloom.n_hashes {
-            //to get the address, heavy bits are from the minimizer (giving the block)
-            //and light bits are given by the hash of the kmer himself
             let address = hash as usize & address_mask;
-            //let address = hash as usize%bloom.block_size;
             all_addresses[last_relevant_index] = address;
             last_relevant_index += 1;
             hash = xorshift_u128(hash);
         }
 
-        //let already_in = bloom.check_and_insert(subblock, last_hash);
-        //do_smth if it was already in, like adding it to a hash_table for counting
-        //problem with that : its gonna take an awful lot of space i think (it does)
         kmer_number+=1;
 
     }
     let relevant_addresses = &mut all_addresses[..last_relevant_index];
-    //relevant_addresses.sort_unstable();
-    //REMOVED MODULO
     let blocknum: usize = (hashed_minimizer as usize)&1023;
-    //REMOVED MODULO
     let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
     let subblock = &mut block[subblocknum];
@@ -629,7 +517,6 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
 }
 
 
-///output function that requires local modules and is therefore written here
 fn write_auto_bench_stdout(
     no_bloom : bool, 
     no_hashtable : bool,

@@ -4,12 +4,8 @@
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
-//use std::str;
 use packed_seq::{PackedSeqVec, SeqVec};
-//use bitvec::prelude::*;
 use needletail::FastxReader;
-//use needletail::parser::SequenceRecord;
-//use needletail::errors::ParseError;
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
 pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
@@ -44,45 +40,12 @@ pub fn read_fof(fof_file: String) -> Vec<String> {
     iter_files
 }
 
-//function that reads a fasta file with multiple (really many) reads, usefull for having plenty of
-//reads without paying the header cost of having millions of files
-//pub fn read_multi_fasta(fasta_file: String) -> 
-//     maybe later idk                               //
-
 ///classic function to simply read any file line by line efficiently
 pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where P: AsRef<Path>, {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
 }
-
-//pub struct FastaReader<T: FastxReader> {
-//    pub lines: T,
-//    pub chunk_size: usize,
-//}
-//
-//impl<'a, T> Iterator for FastaReader<T> {
-//        type Item<'b> = Vec<Option<Result<SequenceRecord<'b>, ParseError>>>;
-//
-//        fn next(&mut self) -> Option<Self::Item> {
-//            let mut chunk = Vec::with_capacity(self.chunk_size);
-//            for _ in 0..self.chunk_size {
-//                if let Some(line) = self.lines.next() {
-//                    match line {
-//                        Ok(content) => chunk.push(line),
-//                        Err(_) => break,
-//                    }
-//                } else {
-//                    break;
-//                }
-//            }
-//            if chunk.is_empty() {
-//                None
-//            } else {
-//                Some(chunk)
-//            }
-//        }
-//}
 
 /// I never hated a struct more than an Iterator with lifetimes, worst invention in Mankind history
 pub struct Hell {
@@ -107,8 +70,3 @@ impl Iterator for Hell {
         }
     }
 }
-
-//pub struct ExtraHell {
-//    pub fxreader: Box<dyn FastxReader>,
-//    pub chunk_size: usize,
-//}
