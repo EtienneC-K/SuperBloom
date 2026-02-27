@@ -194,11 +194,6 @@ def write_transitional_header(data):
         "median fill",
         "overfilled rate",
         "",
-        "hash table non zeros",
-        "max block fill",
-        "average fill",
-        "median fill",
-        "",
         "false negs",
         "false pos",
         "",
@@ -275,11 +270,8 @@ def launch_bloomys(data, input_file, threads, max_ram):
     #run and add the results to "data"
 
     #not default values, different stages of execution
-    size = 36
+    size = 31
     block_size = 14
-    ht_size = 28
-    ht_block_size = 14
-    no_ht = True
     no_bloom = False
     only_parse = False
     minimizer_size = 11
@@ -289,11 +281,13 @@ def launch_bloomys(data, input_file, threads, max_ram):
 
     #forget the matrix and makes the small lil cuty plots
     n_hashes = 3
-    for b in [1, 2, 3]:
-        for minimizer_size in [11, 13, 15, 17]:
+    for b in [2]:
+        for minimizer_size in [13]:
+    #for b in [1, 2, 3]:
+    #    for minimizer_size in [11, 13, 15, 17]:
             nb_blocks = 2*(minimizer_size-b)
             block_size = size-nb_blocks
-            data, options = update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes, l, k)
+            data, options = update_options(data, threads, size, block_size, no_bloom, only_parse, minimizer_size, n_hashes, l, k)
             data.append(launch_and_collect(input_file, options))
             print("Finished a bloomybloom option set")
 
@@ -301,18 +295,16 @@ def launch_bloomys(data, input_file, threads, max_ram):
     return (data)
 
 
-def update_options(data, threads, size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes, l, k):
+def update_options(data, threads, size, block_size, no_bloom, only_parse, minimizer_size, n_hashes, l, k):
     """updates the options and data variable with all the specified options values"""
-    options = f"-t {threads} --input-type 1 --size {size} --block-size {block_size} --table-size {ht_size} --table-block-size {ht_block_size} -m {minimizer_size} --n-hashes {n_hashes} -l {l} -k {k} --simd-minimizer"
+    options = f"-t {threads} --input-type 1 --size {size} --block-size {block_size} -m {minimizer_size} --n-hashes {n_hashes} -l {l} -k {k} --simd-minimizer"
     if only_parse:
         options += " --only-parse"
     elif no_bloom:
         options += " --no-bloom"
-    elif no_ht:
-        options += " --no-hashtable"
     
 
-    data.append(write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes))
+    data.append(write_options(size, block_size, no_bloom, only_parse, minimizer_size, n_hashes))
 
     return (data, options)
 
@@ -358,7 +350,7 @@ def launch_and_collect(input_file, options):
     return (timed_results+counted_results + ["", str(accuracy), skips])
 
 
-def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, only_parse, minimizer_size, n_hashes):
+def write_options(size, block_size, no_bloom, only_parse, minimizer_size, n_hashes):
     """
     function to write a human readable string with all options, this string will be appended to data
     important note : this writes all sizes fully, but the given variables are powers of 2
@@ -368,11 +360,7 @@ def write_options(size, block_size, ht_size, ht_block_size, no_ht, no_bloom, onl
     return_text += f", size {write_spaced_digits(2**size)}"
     return_text += f", block-size : {write_spaced_digits(2**block_size)}"
     return_text += f", nb-blocks : {write_spaced_digits(2**(size-block_size))}"
-    return_text += f", ht-size : {write_spaced_digits(2**ht_size)}"
-    return_text += f", ht-block-size : {write_spaced_digits(2**ht_block_size)}"
-    return_text += f", nb-ht_blocks : {write_spaced_digits(2**(ht_size-ht_block_size))}"
     return_text += f", n-hashes : {n_hashes}"
-    return_text += f", no_hashtable : {no_ht}"
     return_text += f", no_bloom : {no_bloom}"
     return_text += f", only_parse : {only_parse}"
 
@@ -404,7 +392,7 @@ def parse_counted(count_output):
     data_line = data_line.split("|")
     return_list = []
     print("printing all the data bits")
-    for i in range(12):
+    for i in range(8):
         #main use of this loop is to check the length of data_line, ie if no errors in bloomybloom
         data_bit = data_line[i]
         data_bit = data_bit[0:6]
@@ -414,8 +402,7 @@ def parse_counted(count_output):
     #no to insert spaces in the list to align the columns
     return_list.insert(0, "")
     return_list.insert(6, "")
-    return_list.insert(11, "")
-    return_list.insert(14, "")
+    return_list.insert(9, "")
 
     return return_list
 

@@ -4,8 +4,6 @@
 
 mod input;
 mod bloom;
-mod counter;
-mod output;
 mod unit_tests_one_day;
 pub mod utils;
 pub mod decyclers;
@@ -16,9 +14,7 @@ use input::{read_fof, read_fasta, Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
 use bloom::BloomFilter;
-use counter::{CountTable};
 use utils::{xorshift_u64, xorshift_u128};
-use output::{write_output};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
 use rayon::prelude::*;
@@ -97,11 +93,8 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     counting: bool,
 
-    ///to disable all code referring to the hash_table, for testing without it
-    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
-    no_hashtable: bool,
 
-    ///to disable all code referring to the bloom filter, enables no_hashtable
+    ///to disable all code referring to the bloom filter
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     no_bloom: bool,
 
@@ -133,13 +126,10 @@ pub fn main() {
     let mut size: usize = 1<<args.size;
     let mut block_size:usize = 1<<args.block_size;
     let mut nb_blocks: usize = size/block_size;
-    let mut table_size: usize = 1<<args.table_size;
-    let mut table_block_size: usize = 1<<args.table_block_size;
     let one_to_one: bool = args.one_to_one;
     let sequential_fallback: usize = args.sequential_fallback;
     let only_parse: bool = args.only_parse;
     let no_bloom: bool = args.no_bloom || args.only_parse;
-    let no_hashtable: bool = args.no_hashtable || args.no_bloom || args.only_parse;
 
     assert!(k >= l); //cant have the lmers be longer than the kmers
 
@@ -155,12 +145,6 @@ pub fn main() {
         nb_blocks = 1024;
     }
 
-    if no_hashtable {
-        table_size = 1024;
-        table_block_size = 1;
-    }
-
-    
     //number of threads allowed
     unsafe {
         env::set_var("RAYON_NUM_THREADS", args.threads);
@@ -170,10 +154,9 @@ pub fn main() {
 
     //we create the needed data structures to store everything
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
-    let hash_table = CountTable::new(table_size, table_block_size);
 
     //calculating decycling sets as well as its time
-    let mut duration_overhead_decycling: Duration;
+    let duration_overhead_decycling: Duration;
     let mut decycler_set: Decycler;
     let debut = Instant::now();
     if !args.simd_minimizer {
@@ -198,8 +181,8 @@ pub fn main() {
             for line in chunk {
                 let sequence = read_fasta(line.to_string());
                 let local_kmer_sum =
-                    handle_sequence(&bloom, &hash_table, sequence, k, m, nb_blocks, 
-                    one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set, l);
+                    handle_sequence(&bloom, sequence, k, m, nb_blocks, 
+                    one_to_one, no_bloom, &mut all_addresses, &decycler_set, l);
                 let mut total_sum = kmer_sum.lock().unwrap();
                 *total_sum = total_sum.wrapping_add(local_kmer_sum);
                 drop(total_sum);
@@ -237,8 +220,8 @@ pub fn main() {
                     block_lines_counter += sequence.len();
                 } else if sequence.len() >= k as usize+2 {
                     let local_kmer_sum =
-                        handle_sequence(&bloom, &hash_table, sequence, k, m, nb_blocks,
-                        one_to_one, no_bloom, no_hashtable, &mut all_addresses, &decycler_set, l);
+                        handle_sequence(&bloom, sequence, k, m, nb_blocks,
+                        one_to_one, no_bloom, &mut all_addresses, &decycler_set, l);
                     if no_bloom {
                         let mut total_sum = kmer_sum.lock().unwrap();
                         *total_sum = total_sum.wrapping_add(local_kmer_sum);
@@ -272,22 +255,13 @@ pub fn main() {
 
 
 
-    //maintenant on s'occupe de la sortie et tout la
-    let final_count: Vec<u64> = hash_table.calculate_output();
-    let _ = write_output(&final_count);
-
-
     //printing only a line for the benchmark evaluating programm if option --auto-bench if on
     if args.auto_bench {
         write_auto_bench_stdout(
             no_bloom, 
-            no_hashtable,
             bloom,
-            hash_table,
             nb_blocks,
             block_size,
-            table_size,
-            table_block_size,
             false_negative_rate,
             false_positive_rate,
             duration_overhead_decycling,
@@ -299,7 +273,6 @@ pub fn main() {
         println!("Parameters : ");
         println!("k : {k}, m: {m}");
         println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
-        println!("ht size : {table_size}, block size {table_block_size}, nb_blocks {0}", table_size/table_block_size);
         println!("sequetial fallback : {sequential_fallback}");
  
         println!("");
@@ -323,26 +296,8 @@ pub fn main() {
             }
 
             println!("");
-
-            if !no_hashtable {
-                let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
-                let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
-                let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
-                let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
-                let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
-
-                println!("Non zero ht amount : {n_z_ht}");
-                println!("Non zero ht block rates : {n_z_ht_rate}");
-                println!("Max ht fill rate : {max_ht_rate}");
-                println!("Median ht fill rate : {median_ht_rate}");
-                println!("Average ht fill rate : {average_ht_rate}");
-            }
-
-            println!("");
         }
 
-        println!("And with all that we get a skip amount of {0}", 
-            *hash_table.skip_counter.lock().unwrap());
         println!("");
         let anti_optim_count = *kmer_sum.lock().unwrap();
         println!("anti optim count {anti_optim_count}");
@@ -352,14 +307,12 @@ pub fn main() {
 
 fn handle_sequence(
     bloom: &BloomFilter,
-    hash_table: &CountTable,
     original_sequence: PackedSeqVec,
     k: u16,
     m: u16,
     nb_blocks: usize,
     one_to_one: bool,
     no_bloom: bool,
-    no_hashtable: bool,
     all_addresses: &mut Vec<usize>,
     decycler_set: &Decycler,
     l: u16,
@@ -402,13 +355,13 @@ fn handle_sequence(
             if l <= 31 {
                 kmer_number = 
                     handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-                    bloom, hash_table, k, hashed_minimizer, kmer_number,
-                    no_hashtable, all_addresses, address_mask, l);
+                    bloom, k, hashed_minimizer, kmer_number,
+                    all_addresses, address_mask, l);
             } else {
                 kmer_number = 
                     handle_super_kmer_u128(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-                    bloom, hash_table, k, hashed_minimizer, kmer_number,
-                    no_hashtable, all_addresses, address_mask, l);
+                    bloom, k, hashed_minimizer, kmer_number,
+                    all_addresses, address_mask, l);
             }
         }
     }
@@ -428,15 +381,15 @@ fn handle_sequence(
                 handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
                 (sequence.len()+1-k as usize) as u32,
                 &sequence, 
-                bloom, hash_table, k, hashed_minimizer,
-                kmer_number, no_hashtable, all_addresses, address_mask, l);
+                bloom, k, hashed_minimizer,
+                kmer_number, all_addresses, address_mask, l);
         } else {
             let _ = 
                 handle_super_kmer_u128(super_kmers_positions[super_kmers_positions.len()-1], 
                 (sequence.len()+1-k as usize) as u32,
                 &sequence,
-                bloom, hash_table, k, hashed_minimizer,
-                kmer_number, no_hashtable, all_addresses, address_mask, l);
+                bloom, k, hashed_minimizer,
+                kmer_number, all_addresses, address_mask, l);
         }
     }
 
@@ -446,9 +399,8 @@ fn handle_sequence(
 
 fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     bloom: &BloomFilter, 
-    _hash_table: &CountTable, 
     k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
+    mut kmer_number: usize, all_addresses: &mut Vec<usize>, 
     address_mask: usize, l: u16) -> usize {
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize{
@@ -482,9 +434,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
 
 fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     bloom: &BloomFilter, 
-    _hash_table: &CountTable, 
     k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, _no_hashtable: bool, all_addresses: &mut Vec<usize>, 
+    mut kmer_number: usize, all_addresses: &mut Vec<usize>, 
     address_mask: usize, l: u16) -> usize {
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize {
@@ -519,13 +470,9 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
 
 fn write_auto_bench_stdout(
     no_bloom : bool, 
-    no_hashtable : bool,
     bloom: BloomFilter,
-    hash_table: CountTable,
     nb_blocks: usize,
     block_size: usize,
-    table_size: usize,
-    table_block_size: usize,
     false_positive_rate: f64,
     false_negative_rate: f64,
     duration_overhead_decycling: Duration,
@@ -547,18 +494,6 @@ fn write_auto_bench_stdout(
         print_string += &format!("0|0|0|0");
     }
 
-    if !no_hashtable {
-        let (n_z_ht, max_ht, median_ht, average_ht) = hash_table.count_it_all();
-        let n_z_ht_rate: f64 = n_z_ht as f64/(table_size /table_block_size) as f64;
-        let max_ht_rate: f64 = max_ht as f64/table_block_size as f64;
-        let median_ht_rate: f64 = median_ht as f64/table_block_size as f64;
-        let average_ht_rate: f64 = average_ht as f64/table_block_size as f64;
-
-        print_string +=
-            &format!("|{n_z_ht_rate}|{max_ht_rate}|{average_ht_rate}|{median_ht_rate}");
-    } else {
-        print_string += "|0|0|0|0";
-    }
 
     //false negatives and false potitives rates
     print_string += &format!("|{:.3}|{:.3}", false_positive_rate, false_negative_rate);

@@ -5,7 +5,7 @@ use crate::decyclers;
 
 use packed_seq::{PackedSeqVec, SeqVec, Seq, PackedSeq};
 use simd_minimizers::{canonical_minimizers};
-use decyclers::{Decycler, compute_membership, init_vec_ci};
+use decyclers::{Decycler};
 
 ///function that does all the job we're looking for here, with given kmer and word lengths
 ///also converts the packedseqvec to a bitvec to easily slice it later on
