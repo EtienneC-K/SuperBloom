@@ -79,11 +79,6 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     input_type: u8,
 
-    ///argument to set the blocks to match one to one the minimizers, based on minimizer length,
-    ///and bloom size and overrides the blocksize
-    ///warning : deprecated, probably not functionnal anymore, especially for calc false pos rates
-    #[arg(short, long, action = clap::ArgAction::SetTrue, default_value_t = false)]
-    one_to_one: bool,
 
     ///number of reads to be distributed in a row to each thread
     #[arg(long, default_value_t = 100)]
@@ -126,18 +121,11 @@ pub fn main() {
     let mut size: usize = 1<<args.size;
     let mut block_size:usize = 1<<args.block_size;
     let mut nb_blocks: usize = size/block_size;
-    let one_to_one: bool = args.one_to_one;
     let sequential_fallback: usize = args.sequential_fallback;
     let only_parse: bool = args.only_parse;
     let no_bloom: bool = args.no_bloom || args.only_parse;
 
     assert!(k >= l); //cant have the lmers be longer than the kmers
-
-    //for the special case where i want to map 
-    if one_to_one {
-        nb_blocks = 1<<(2*m);
-        block_size = size/nb_blocks;
-    }
 
     if no_bloom {
         size = 1024;
@@ -182,7 +170,7 @@ pub fn main() {
                 let sequence = read_fasta(line.to_string());
                 let local_kmer_sum =
                     handle_sequence(&bloom, sequence, k, m, nb_blocks, 
-                    one_to_one, no_bloom, &mut all_addresses, &decycler_set, l);
+                    no_bloom, &mut all_addresses, &decycler_set, l);
                 let mut total_sum = kmer_sum.lock().unwrap();
                 *total_sum = total_sum.wrapping_add(local_kmer_sum);
                 drop(total_sum);
@@ -221,7 +209,7 @@ pub fn main() {
                 } else if sequence.len() >= k as usize+2 {
                     let local_kmer_sum =
                         handle_sequence(&bloom, sequence, k, m, nb_blocks,
-                        one_to_one, no_bloom, &mut all_addresses, &decycler_set, l);
+                        no_bloom, &mut all_addresses, &decycler_set, l);
                     if no_bloom {
                         let mut total_sum = kmer_sum.lock().unwrap();
                         *total_sum = total_sum.wrapping_add(local_kmer_sum);
@@ -311,7 +299,6 @@ fn handle_sequence(
     k: u16,
     m: u16,
     nb_blocks: usize,
-    one_to_one: bool,
     no_bloom: bool,
     all_addresses: &mut Vec<usize>,
     decycler_set: &Decycler,
@@ -342,12 +329,7 @@ fn handle_sequence(
     for i in 0..super_kmers_positions.len()-1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
-        let hashed_minimizer: u64;
-        if one_to_one {
-            hashed_minimizer = minimizer_values[i]&(nb_blocks as u64-1);
-        } else {
-            hashed_minimizer = xorshift_u64(minimizer_values[i])&(nb_blocks as u64-1);
-        }
+        let hashed_minimizer: u64 = xorshift_u64(minimizer_values[i])&(nb_blocks as u64-1);
         if no_bloom {
             //prevent optims
             local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
@@ -366,12 +348,7 @@ fn handle_sequence(
         }
     }
     //not forgetting the last element of the list
-    let hashed_minimizer: u64;
-    if one_to_one {
-        hashed_minimizer = minimizer_values[minimizer_values.len()-1]&(nb_blocks as u64-1);
-    } else {
-        hashed_minimizer = xorshift_u64(minimizer_values[minimizer_values.len()-1])&(nb_blocks as u64-1);
-    }
+    let hashed_minimizer: u64 = xorshift_u64(minimizer_values[minimizer_values.len()-1])&(nb_blocks as u64-1);
     if no_bloom {
         //prevent optims
         local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
