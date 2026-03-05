@@ -207,7 +207,7 @@ impl BloomFilter {
     ///for parallel operations, as only small checks at the end
     ///returns a vec of boolean with the i-th indexed boolean corresponding to if the i-th kmer
     ///returns a positive
-    fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
+    pub fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
     //fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
         //let mut count_true: usize = 0;
         //let mut count_false: usize = 0;
@@ -248,6 +248,7 @@ impl BloomFilter {
                 //    count_false +=1;
                 //}
             }
+            drop(block);
         }
         //(count_true, count_false)
         presence_vec
@@ -270,7 +271,7 @@ impl BloomFilter {
         true
     }
 
-    fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
+    pub fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
     //fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
         //let mut count_true: usize = 0;
         //let mut count_false: usize = 0;
@@ -311,6 +312,7 @@ impl BloomFilter {
                 //    count_false +=1;
                 //}
             }
+            drop(block);
         }
         //(count_true, count_false)
         presence_vec

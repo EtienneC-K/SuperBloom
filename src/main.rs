@@ -14,7 +14,7 @@ use input::{read_fof, read_fasta, Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
 use bloom::BloomFilter;
-use utils::{xorshift_u64, xorshift_u128};
+use utils::{xorshift_u64, xorshift_u128, sum_vec_bool};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
 use rayon::prelude::*;
@@ -104,6 +104,10 @@ struct Args {
     ///enables using simd_minimizer instead of any weird thing i cooked up myself
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     simd_minimizer: bool,
+
+    ///path to a file containing the sequences to be queried
+    #[arg(long, default_value_t = String::from(""))]
+    query_file: String,
 
 }
 
@@ -197,7 +201,8 @@ pub fn main() {
                 let sequence = PackedSeqVec::from_ascii(&line);
 
                 //roll a dice to add to the false negatives checker
-                let dice_roll = rand::rng().random_range(0..5000);
+                //let dice_roll = rand::rng().random_range(0..5000);
+                let dice_roll = rand::rng().random_range(0..1);
                 if dice_roll == 0 {
                     let mut false_negs = false_neg_list.lock().unwrap();
                     false_negs.push(sequence.clone());
@@ -224,15 +229,60 @@ pub fn main() {
                 drop(total_sum);
             }
         })
-
     } else {
         panic!("Unrecognized input type, must be 0 or 1");
     }
+
+    if args.query_file != "" {
+        //this means that we do have to query
+        let mut query_counter: Mutex<usize> = Mutex::new(0);
+        let mut positive_query_counter: Mutex<usize> = Mutex::new(0);
+
+        let reader = parse_fastx_file(&args.query_file).expect("valid path/file");
+
+        let chunked_lines = Hell {
+            fxreader : reader,
+            chunk_size : sequential_fallback,
+        };
+
+        chunked_lines.par_bridge().for_each(|chunk| {
+            let mut local_count: usize = 0;
+            let mut local_pos_count: usize = 0;
+            for line in chunk {
+                let sequence = PackedSeqVec::from_ascii(&line);
+                let mut presence_vec: Vec<bool> = Vec::new();
+                if l<=31 {
+                    presence_vec = bloom.check_sequence(sequence, k, m, l, &decycler_set);
+                } else {
+                    presence_vec = bloom.check_sequence_u128(sequence, k, m, l, &decycler_set);
+                }
+                local_count += presence_vec.len();
+                local_pos_count += sum_vec_bool(&presence_vec);
+            }
+            let mut q_count = query_counter.lock().unwrap();
+            let mut q_count_pos = positive_query_counter.lock().unwrap();
+            *q_count += local_count;
+            *q_count_pos += local_pos_count;
+            drop(q_count);
+            drop(q_count_pos);
+        });
+
+        if !args.auto_bench {
+            let q_count = query_counter.lock().unwrap();
+            let q_count_pos = positive_query_counter.lock().unwrap();
+            println!("Number of kmer queried : {q_count}");
+            println!("Number of positives : {q_count_pos}");
+        }
+    } else {
+        println!("apparement on va pas query {0}", args.query_file);
+    }
+
     let false_negs = false_neg_list.lock().unwrap().to_vec();
     let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, l, &decycler_set);
     if !args.auto_bench {
         println!("false negative rate : {false_negative_rate}");
         println!("false positive rate : {false_positive_rate}");
+        println!("-----------------------------------------------------------------");
     }
     
     //to prevent optims

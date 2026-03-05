@@ -59,7 +59,10 @@ impl Iterator for Hell {
     fn next(&mut self) -> Option<Self::Item> {
         let mut chunk = Vec::new();
         for _ in 0..self.chunk_size {
-            let result = self.fxreader.next()?;
+            let result = match self.fxreader.next() {
+                Some(res) => res,
+                None => break,
+            };
             let seq_red = result.unwrap().seq().to_mut().clone();
             chunk.push(seq_red);
         }
