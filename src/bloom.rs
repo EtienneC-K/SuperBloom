@@ -12,7 +12,7 @@ use rayon::prelude::ParallelSliceMut;
 use std::ops::Deref;
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use decyclers::Decycler;
-use utils::{xorshift_u64, xorshift_u128};
+use utils::{xorshift_u64, xorshift_u128, sum_vec_bool};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use rand::prelude::*;
 
@@ -142,9 +142,13 @@ impl BloomFilter {
             total_count += sequence.len()-(k as usize)+1;
             let (_count_true, count_false): (usize, usize);
             if l <= 31 {
-                (_count_true, count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
+                //(_count_true, count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
+                let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set);
+                count_false = presence_vec.len()-sum_vec_bool(&presence_vec);
             } else {
-                (_count_true, count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+                //(_count_true, count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+                let presence_vec = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+                count_false = presence_vec.len()-sum_vec_bool(&presence_vec);
             }
             false_negative_count += count_false;
         }
@@ -187,9 +191,13 @@ impl BloomFilter {
         //now to check false positives
         let (count_true, _count_false): (usize, usize);
         if l <= 31 {
-            (count_true, _count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
+            //(count_true, _count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
+            let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set);
+            count_true = sum_vec_bool(&presence_vec);
         } else {
-            (count_true, _count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+            //(count_true, _count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+            let presence_vec = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+            count_true = sum_vec_bool(&presence_vec);
         }
 
         count_true
@@ -197,10 +205,13 @@ impl BloomFilter {
 
     ///simply checks if a sequence of kmer is present or not, does no insertion and isn't thought to be suited
     ///for parallel operations, as only small checks at the end
-    ///returns the number of present kmers from the sequence, as well as the number of absent ones
-    fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
-        let mut count_true: usize = 0;
-        let mut count_false: usize = 0;
+    ///returns a vec of boolean with the i-th indexed boolean corresponding to if the i-th kmer
+    ///returns a positive
+    fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
+    //fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
+        //let mut count_true: usize = 0;
+        //let mut count_false: usize = 0;
+        let mut presence_vec: Vec<bool> = Vec::with_capacity(original_sequence.len()-k as usize+1);
         let address_mask = (self.nb_blocks-1)>>10;
 
 
@@ -230,14 +241,16 @@ impl BloomFilter {
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
                 let present: bool = self.check_kmer(subblock, kmer, l);
-                if present {
-                    count_true += 1;
-                } else {
-                    count_false +=1;
-                }
+                presence_vec.push(present);
+                //if present {
+                //    count_true += 1;
+                //} else {
+                //    count_false +=1;
+                //}
             }
         }
-        (count_true, count_false)
+        //(count_true, count_false)
+        presence_vec
     }
 
     ///checks if a kmer is present
@@ -257,9 +270,11 @@ impl BloomFilter {
         true
     }
 
-    fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
-        let mut count_true: usize = 0;
-        let mut count_false: usize = 0;
+    fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
+    //fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
+        //let mut count_true: usize = 0;
+        //let mut count_false: usize = 0;
+        let mut presence_vec: Vec<bool> = Vec::with_capacity(original_sequence.len()-k as usize+1);
         let address_mask = (self.nb_blocks-1)>>10;
 
 
@@ -289,14 +304,16 @@ impl BloomFilter {
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
                 let present: bool = self.check_kmer_u128(subblock, kmer, l);
-                if present {
-                    count_true += 1;
-                } else {
-                    count_false +=1;
-                }
+                presence_vec.push(present);
+                //if present {
+                //    count_true += 1;
+                //} else {
+                //    count_false +=1;
+                //}
             }
         }
-        (count_true, count_false)
+        //(count_true, count_false)
+        presence_vec
     }
 
     ///checks if a kmer is present

@@ -25,3 +25,12 @@ pub fn xorshift_u128(mut x: u128) -> u128 {
     x ^= x << 5;
     x
 }
+
+///returns the amount of positive bits in a boolean vector
+pub fn sum_vec_bool(boolean_vector: &Vec<bool>) -> usize {
+    let mut counter: usize = 0;
+    for val in boolean_vector {
+        if *val {counter += 1};
+    }
+    counter
+}
