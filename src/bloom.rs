@@ -142,11 +142,9 @@ impl BloomFilter {
             total_count += sequence.len()-(k as usize)+1;
             let (_count_true, count_false): (usize, usize);
             if l <= 31 {
-                //(_count_true, count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
                 let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set);
                 count_false = presence_vec.len()-sum_vec_bool(&presence_vec);
             } else {
-                //(_count_true, count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
                 let presence_vec = self.check_sequence_u128(sequence, k, m, l, decycler_set);
                 count_false = presence_vec.len()-sum_vec_bool(&presence_vec);
             }
@@ -163,6 +161,11 @@ impl BloomFilter {
         nb_sequence_false_negs: usize,
         decycler_set: &Decycler,
         ) -> f64 {
+
+        //protection against small examples with no good dice rolls
+        if nb_sequence_false_negs < 1 {
+            return -1.0;
+        }
 
         let mut total_false_pos: usize = 0;
         let avg_len: usize = total_false_negs/nb_sequence_false_negs;
@@ -191,11 +194,9 @@ impl BloomFilter {
         //now to check false positives
         let (count_true, _count_false): (usize, usize);
         if l <= 31 {
-            //(count_true, _count_false) = self.check_sequence(sequence, k, m, l, decycler_set);
             let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set);
             count_true = sum_vec_bool(&presence_vec);
         } else {
-            //(count_true, _count_false) = self.check_sequence_u128(sequence, k, m, l, decycler_set);
             let presence_vec = self.check_sequence_u128(sequence, k, m, l, decycler_set);
             count_true = sum_vec_bool(&presence_vec);
         }
@@ -207,10 +208,12 @@ impl BloomFilter {
     ///for parallel operations, as only small checks at the end
     ///returns a vec of boolean with the i-th indexed boolean corresponding to if the i-th kmer
     ///returns a positive
-    pub fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
-    //fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
-        //let mut count_true: usize = 0;
-        //let mut count_false: usize = 0;
+    pub fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
+        //protection against small sequences
+        if original_sequence.len() > k as usize {
+            return vec![];
+        }
+
         let mut presence_vec: Vec<bool> = Vec::with_capacity(original_sequence.len()-k as usize+1);
         let address_mask = (self.nb_blocks-1)>>10;
 
@@ -240,17 +243,11 @@ impl BloomFilter {
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer(subblock, kmer, l);
+                let present: bool = self.check_kmer(subblock, kmer, s);
                 presence_vec.push(present);
-                //if present {
-                //    count_true += 1;
-                //} else {
-                //    count_false +=1;
-                //}
             }
             drop(block);
         }
-        //(count_true, count_false)
         presence_vec
     }
 
@@ -271,10 +268,12 @@ impl BloomFilter {
         true
     }
 
-    pub fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> Vec<bool> {
-    //fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (usize, usize) {
-        //let mut count_true: usize = 0;
-        //let mut count_false: usize = 0;
+    pub fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
+        //protection against small sequences
+        if original_sequence.len() > k as usize {
+            return vec![];
+        }
+
         let mut presence_vec: Vec<bool> = Vec::with_capacity(original_sequence.len()-k as usize+1);
         let address_mask = (self.nb_blocks-1)>>10;
 
@@ -304,17 +303,11 @@ impl BloomFilter {
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer_u128(subblock, kmer, l);
+                let present: bool = self.check_kmer_u128(subblock, kmer, s);
                 presence_vec.push(present);
-                //if present {
-                //    count_true += 1;
-                //} else {
-                //    count_false +=1;
-                //}
             }
             drop(block);
         }
-        //(count_true, count_false)
         presence_vec
     }
 

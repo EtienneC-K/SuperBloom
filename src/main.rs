@@ -240,8 +240,7 @@ pub fn main() {
                 let sequence = PackedSeqVec::from_ascii(&line);
 
                 //roll a dice to add to the false negatives checker
-                //let dice_roll = rand::rng().random_range(0..5000);
-                let dice_roll = rand::rng().random_range(0..1);
+                let dice_roll = rand::rng().random_range(0..5000);
                 if dice_roll == 0 {
                     let mut false_negs = false_neg_list.lock().unwrap();
                     false_negs.push(sequence.clone());
