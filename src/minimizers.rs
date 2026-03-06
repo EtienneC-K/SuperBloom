@@ -56,7 +56,7 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
     let mut mini_addrs: Vec<usize> = Vec::with_capacity(packed_seq.len()-k as usize+1);
     //do a max and a is_decyc var, and look for the minimums in each chunk
     //first look for the minimizer in the first kmer
-    let (mut min_addr, mut is_decyc, mut min_lexic) = 
+    let (mut min_addr, mut _is_decyc, mut _min_lexic) = 
         mins_from_kmer(packed_seq.as_slice(), &is_decycler, 0, m, k);
     mini_addrs.push(min_addr);
 
@@ -66,7 +66,7 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
         if min_addr < i {
             //is the previous memeber of decycling set rolls out, or it wasn't one in the first
             //place and it just rolled out, we look for a new minimizer
-            (min_addr, is_decyc, min_lexic) =
+            (min_addr, _is_decyc, _min_lexic) =
                 mins_from_kmer(packed_seq.as_slice(), &is_decycler, i, m, k);
         }
 

@@ -10,7 +10,7 @@ pub mod decyclers;
 pub mod super_bitvec;
 pub mod minimizers;
 
-use input::{read_fof, read_fasta, Hell};
+use input::{Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
 use bloom::BloomFilter;
@@ -127,7 +127,6 @@ pub fn main() {
 
     //defining all variables constants that are based on the argument input
     let k: u16 = args.k;
-    let ram = args.ram;
     let n_hashes: usize = args.n_hashes;
     let s: u16 = args.s;
 
@@ -271,8 +270,8 @@ pub fn main() {
 
     if args.query_file != "" {
         //this means that we do have to query
-        let mut query_counter: Mutex<usize> = Mutex::new(0);
-        let mut positive_query_counter: Mutex<usize> = Mutex::new(0);
+        let query_counter: Mutex<usize> = Mutex::new(0);
+        let positive_query_counter: Mutex<usize> = Mutex::new(0);
 
         let reader = parse_fastx_file(&args.query_file).expect("valid path/file");
 
@@ -286,7 +285,7 @@ pub fn main() {
             let mut local_pos_count: usize = 0;
             for line in chunk {
                 let sequence = PackedSeqVec::from_ascii(&line);
-                let mut presence_vec: Vec<bool> = Vec::new();
+                let presence_vec: Vec<bool>;
                 if s<=31 {
                     presence_vec = bloom.check_sequence(sequence, k, m, s, &decycler_set);
                 } else {

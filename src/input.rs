@@ -8,10 +8,10 @@ use packed_seq::{PackedSeqVec, SeqVec};
 use needletail::FastxReader;
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
-pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
+pub fn _read_fasta(fasta_file: String) -> PackedSeqVec {
     //var that will contain the concatenation of all lines before conversion to packed_seq
     let mut full_ascii: String = String::new();
-    if let Ok(lines) = read_lines(fasta_file) {
+    if let Ok(lines) = _read_lines(fasta_file) {
         for line in lines {
             let unwrapped_line = line.expect("Problem reading a FASTA");
             let line_bytes = unwrapped_line.as_bytes();
@@ -30,9 +30,9 @@ pub fn read_fasta(fasta_file: String) -> PackedSeqVec {
 
 ///function for reading a file of file to handle lots of fasta at once
 ///the fof should have the path to a single fasta on each line
-pub fn read_fof(fof_file: String) -> Vec<String> {
+pub fn _read_fof(fof_file: String) -> Vec<String> {
     let mut iter_files: Vec<String> = Vec::new();
-    if let Ok(lines) = read_lines(fof_file) {
+    if let Ok(lines) = _read_lines(fof_file) {
         for line in lines {
             iter_files.push(line.unwrap());
         }
@@ -41,7 +41,7 @@ pub fn read_fof(fof_file: String) -> Vec<String> {
 }
 
 ///classic function to simply read any file line by line efficiently
-pub fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+pub fn _read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
 where P: AsRef<Path>, {
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
