@@ -297,7 +297,7 @@ def launch_bloomys(data, input_file, threads, max_ram):
 
 def update_options(data, threads, size, block_size, no_bloom, only_parse, minimizer_size, n_hashes, l, k):
     """updates the options and data variable with all the specified options values"""
-    options = f"-t {threads} --input-type 1 --size {size} --block-size {block_size} -m {minimizer_size} --n-hashes {n_hashes} -l {l} -k {k} --simd-minimizer"
+    options = f"-t {threads} --size {size} --block-size {block_size} -m {minimizer_size} --n-hashes {n_hashes} -l {l} -k {k} --simd-minimizer"
     if only_parse:
         options += " --only-parse"
     elif no_bloom:

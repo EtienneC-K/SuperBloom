@@ -72,14 +72,6 @@ struct Args {
     #[arg(short, long, default_value_t = String::from("1"))]
     threads: String,
 
-    ///input method, can be 0 for a file of file directing to single fastas, or 1 for a single
-    ///multi_fasta (in which case we assume very hard that lines' lenghts do not cap a 80, but at the 
-    ///reads' lengths)
-    ///dev note: input_type 0 is way behind in commits, do not use
-    #[arg(long, default_value_t = 0)]
-    input_type: u8,
-
-
     ///number of reads to be distributed in a row to each thread
     #[arg(long, default_value_t = 100)]
     sequential_fallback: usize,
@@ -165,22 +157,7 @@ pub fn main() {
     //used to check for false negative rate at the end
     let false_neg_list: Mutex<Vec<PackedSeqVec>> = Mutex::new(Vec::new());
 
-    //now we parse and treat each input method
-    if args.input_type == 0 {
-        let iter_files = read_fof(filename.to_string());
-        iter_files.chunks(sequential_fallback).par_bridge().for_each(|chunk| {
-            let mut all_addresses: Vec<usize> = vec![0; 7*(2*k-m) as usize];
-            for line in chunk {
-                let sequence = read_fasta(line.to_string());
-                let local_kmer_sum =
-                    handle_sequence(&bloom, sequence, k, m, nb_blocks, 
-                    no_bloom, &mut all_addresses, &decycler_set, l);
-                let mut total_sum = kmer_sum.lock().unwrap();
-                *total_sum = total_sum.wrapping_add(local_kmer_sum);
-                drop(total_sum);
-            }
-        });
-    } else if args.input_type == 1 {
+    {
         let reader = parse_fastx_file(&filename).expect("valid path/file");
 
         let chunked_lines = Hell {
@@ -229,8 +206,6 @@ pub fn main() {
                 drop(total_sum);
             }
         })
-    } else {
-        panic!("Unrecognized input type, must be 0 or 1");
     }
 
     if args.query_file != "" {
