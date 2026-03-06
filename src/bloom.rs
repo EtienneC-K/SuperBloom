@@ -255,11 +255,11 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, l: u16) -> bool {
+    fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
 
-        for i in 0..kmer.len()-l as usize +1 {
-            let lmer = kmer.slice(i..i+l as usize);
-            let mut hash = xorshift_u64(lmer.as_u64());
+        for i in 0..kmer.len()-s as usize +1 {
+            let smer = kmer.slice(i..i+s as usize);
+            let mut hash = xorshift_u64(smer.as_u64());
             for _j in 0..self.n_hashes {
                 let address = hash as usize&self.block_size_mask;
                 if !subblock.get(address) {
@@ -319,11 +319,11 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
-    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, l: u16) -> bool {
+    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
 
-        for i in 0..kmer.len()-l as usize+1 {
-            let lmer = kmer.slice(i..i+l as usize);
-            let mut hash = xorshift_u128(lmer.as_u128());
+        for i in 0..kmer.len()-s as usize+1 {
+            let smer = kmer.slice(i..i+s as usize);
+            let mut hash = xorshift_u128(smer.as_u128());
             for _j in 0..self.n_hashes {
                 let address = hash as usize&self.block_size_mask;
                 if !subblock.get(address) {

@@ -25,61 +25,74 @@ use rand::Rng;
 use std::time::{Duration, Instant};
 
 
-///taking care of all the needed command line arguments
+///taking care of all the needed command line arguments, first the more open ones, and then the
+///"expert" ones
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    ///path to the file of file
+    ///path to the file to fill the bloom filter
     input: String,
 
-    ///output file (defautl is out.csv)
-    #[arg(short, long, default_value_t = String::from("out.csv"))]
-    output: String,
+    ///path to a file containing the sequences to be queried
+    #[arg(long, default_value_t = String::from(""))]
+    query_file: String,
 
-    ///length of the kmers to count
+    ///length of the kmers
     #[arg(short, long, default_value_t = 31)]
     k: u16,
 
-    ///length of the minimizers for grouping the kmers, has to be inferior to k and inferior to 32
+    ///quality versus performance parameter, positive integer, usually between 1 and 3, a higher
+    ///value will lead to less false positive but slower execution than higher values
+    #[arg(short, long, default_value_t = 2)]
+    b: u16,
+
+    ///max amount of RAM (integer in GB) to be used, must be at least 1
+    #[arg(long, default_value_t = 1)]
+    ram: usize,
+
+    ///number of threads to use (default 1)
+    #[arg(short, long, default_value_t = String::from("1"))]
+    threads: String,
+
+    ///number of hashes for the bloom filter
+    #[arg(short, long, default_value_t = 3)]
+    n_hashes: usize,
+
+    ///length of the s-mers, needs to be inferior or equal to k, if left at the default value 0
+    ///will be set to k-3
+    #[arg(short, long, default_value_t = 0)]
+    s: u16,
+
+    ///enables the use of "expert" parameters, if this flag is down all the aftermentionned
+    ///parameters will
+    ///be chosen automatically, if it is up, you can specifiy the ones you want to fine tune
+    ///the bloom filters to your exact usage, does require you to know what you're doing to still
+    ///have good performances and results.
+    /// \n Will override the b and ram basic parameters
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    exp: bool,
+
+    ///length of the minimizers for grouping the kmers, has to be inferior to k and inferior to 32,
     #[arg(short, long, default_value_t = 11)]
     m: u16,
 
-    ///length of the lmers, needs to be inferior or equal to k
-    #[arg(short, long, default_value_t = 31)]
-    l: u16,
-
-    ///number of hashes for the bloom filter
-    #[arg(short, long, default_value_t = 7)]
-    n_hashes: usize,
-
-    ///size (in bits) of the bloom filter, expressed as a power of 2
+    ///size (in bits) of the bloom filter, expressed as a power of 2, overrides the max ram
+    ///parameter
     #[arg(short, long, default_value_t = 33)]
     size: usize,
 
     ///size (in bits) of each of the bloom filters blocks, expressed as a power of 2
-    #[arg(short, long, default_value_t = 14)]
+    #[arg(short, long, default_value_t = 13)]
     block_size: usize,
-
-    ///size (in number of slots) of the hash table for the final count, expressed as a power of 2 
-    #[arg(long, default_value_t = 28)]
-    table_size: usize,
-
-    ///size (in number of slots) of each of the hash table's blocks, as a power of 2
-    #[arg(long, default_value_t = 14)]
-    table_block_size: usize,
-
-    ///number of threads (default 1)
-    #[arg(short, long, default_value_t = String::from("1"))]
-    threads: String,
 
     ///number of reads to be distributed in a row to each thread
     #[arg(long, default_value_t = 100)]
     sequential_fallback: usize,
 
-    //to enable counting outputs, that take time outside of the actual algorithm
+    //to enable counting outputs, that take time outside of the actual algorithm, but allow to have
+    //more insights on the bloom and the choice of settings
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     counting: bool,
-
 
     ///to disable all code referring to the bloom filter
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
@@ -93,13 +106,10 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     auto_bench: bool,
 
-    ///enables using simd_minimizer instead of any weird thing i cooked up myself
+    ///enables using simd_minimizer double decycling minimizers instead of random
+    ///is slower but slightly better in terms of false positives
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
-    simd_minimizer: bool,
-
-    ///path to a file containing the sequences to be queried
-    #[arg(long, default_value_t = String::from(""))]
-    query_file: String,
+    no_simd_minimizer: bool,
 
 }
 
@@ -108,20 +118,71 @@ pub fn main() {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
     }
-    //defining all variables constants that are based on the argument input
+    //checking the arguments do make some sense
     let args = Args::parse();
-    let k: u16 = args.k;
-    let m: u16 = args.m;
-    let l: u16 = args.l;
-    let n_hashes: usize = args.n_hashes;
-    let mut size: usize = 1<<args.size;
-    let mut block_size:usize = 1<<args.block_size;
-    let mut nb_blocks: usize = size/block_size;
-    let sequential_fallback: usize = args.sequential_fallback;
-    let only_parse: bool = args.only_parse;
-    let no_bloom: bool = args.no_bloom || args.only_parse;
+    assert!(args.ram >= 1);
+    assert!(args.k >= args.s); //cant have the s-mers be longer than the kmers
+    assert!(args.m < 32);
+    assert!(args.m > 0);
 
-    assert!(k >= l); //cant have the lmers be longer than the kmers
+    //defining all variables constants that are based on the argument input
+    let k: u16 = args.k;
+    let ram = args.ram;
+    let n_hashes: usize = args.n_hashes;
+    let s: u16 = args.s;
+
+    let m: u16;
+    let mut size: usize;
+    let mut block_size: usize;
+    let mut nb_blocks: usize;
+    let sequential_fallback: usize;
+    let only_parse: bool;
+    let no_bloom: bool;
+    let no_simd_minimizer: bool;
+    let counting: bool;
+    let auto_bench: bool;
+
+    if !args.exp {
+        //thats for casual users
+        size = 1<<((args.ram as f64).log2().floor() as usize)+30;
+        block_size = 1<<13;
+        nb_blocks = size/block_size;
+        m = (nb_blocks as f64).log2() as u16/2 + args.b;
+        sequential_fallback = 100;
+        counting = false;
+        no_bloom = false;
+        only_parse = false;
+        auto_bench = false;
+        no_simd_minimizer = false;
+
+
+        //if some expert parameters specified but flag is down, warning
+        if args.m != m
+        || args.size != size
+        || args.block_size != block_size
+        || args.sequential_fallback != sequential_fallback
+        || args.only_parse != only_parse
+        || args.no_bloom != no_bloom
+        || args.no_simd_minimizer != no_simd_minimizer
+        || args.counting != counting
+        || args.auto_bench != auto_bench {
+           print!("/!\\ WARNING : experts parameters where specified but the expert parameter ");
+           println!("flag is down, are you sure of what you are doing ? Check --help if necessary."); 
+        }
+    } else {
+        //thats only for the experts
+        m = args.m;
+        size = 1<<args.size;
+        block_size = 1<<args.block_size;
+        nb_blocks = size/block_size;
+        sequential_fallback = args.sequential_fallback;
+        only_parse = args.only_parse;
+        no_bloom= args.no_bloom || args.only_parse;
+        no_simd_minimizer = args.no_simd_minimizer;
+        counting = args.counting;
+        auto_bench = args.auto_bench;
+    }
+
 
     if no_bloom {
         size = 1024;
@@ -143,7 +204,7 @@ pub fn main() {
     let duration_overhead_decycling: Duration;
     let mut decycler_set: Decycler;
     let debut = Instant::now();
-    if !args.simd_minimizer {
+    if no_simd_minimizer {
         decycler_set = Decycler::new(m);
         decycler_set.compute_blocks();
     } else {
@@ -191,7 +252,7 @@ pub fn main() {
                 } else if sequence.len() >= k as usize+2 {
                     let local_kmer_sum =
                         handle_sequence(&bloom, sequence, k, m, nb_blocks,
-                        no_bloom, &mut all_addresses, &decycler_set, l);
+                        no_bloom, &mut all_addresses, &decycler_set, s);
                     if no_bloom {
                         let mut total_sum = kmer_sum.lock().unwrap();
                         *total_sum = total_sum.wrapping_add(local_kmer_sum);
@@ -226,10 +287,10 @@ pub fn main() {
             for line in chunk {
                 let sequence = PackedSeqVec::from_ascii(&line);
                 let mut presence_vec: Vec<bool> = Vec::new();
-                if l<=31 {
-                    presence_vec = bloom.check_sequence(sequence, k, m, l, &decycler_set);
+                if s<=31 {
+                    presence_vec = bloom.check_sequence(sequence, k, m, s, &decycler_set);
                 } else {
-                    presence_vec = bloom.check_sequence_u128(sequence, k, m, l, &decycler_set);
+                    presence_vec = bloom.check_sequence_u128(sequence, k, m, s, &decycler_set);
                 }
                 local_count += presence_vec.len();
                 local_pos_count += sum_vec_bool(&presence_vec);
@@ -242,7 +303,7 @@ pub fn main() {
             drop(q_count_pos);
         });
 
-        if !args.auto_bench {
+        if !auto_bench {
             let q_count = query_counter.lock().unwrap();
             let q_count_pos = positive_query_counter.lock().unwrap();
             println!("Number of kmer queried : {q_count}");
@@ -253,8 +314,8 @@ pub fn main() {
     }
 
     let false_negs = false_neg_list.lock().unwrap().to_vec();
-    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, l, &decycler_set);
-    if !args.auto_bench {
+    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, s, &decycler_set);
+    if !auto_bench {
         println!("false negative rate : {false_negative_rate}");
         println!("false positive rate : {false_positive_rate}");
         println!("-----------------------------------------------------------------");
@@ -269,7 +330,7 @@ pub fn main() {
 
 
     //printing only a line for the benchmark evaluating programm if option --auto-bench if on
-    if args.auto_bench {
+    if auto_bench {
         write_auto_bench_stdout(
             no_bloom, 
             bloom,
@@ -290,7 +351,7 @@ pub fn main() {
  
         println!("");
  
-        if args.counting {
+        if counting {
 
             if !no_bloom {
                 let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = bloom.count_it_all();
@@ -406,8 +467,8 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     address_mask: usize, l: u16) -> usize {
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize{
-        let lmer: PackedSeq = sequence.slice(j..j+l as usize);
-        let mut hash: u64 = xorshift_u64(lmer.as_u64());
+        let smer: PackedSeq = sequence.slice(j..j+l as usize);
+        let mut hash: u64 = xorshift_u64(smer.as_u64());
 
 
         for _i in 0..bloom.n_hashes {
@@ -441,8 +502,8 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     address_mask: usize, l: u16) -> usize {
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize {
-        let lmer: PackedSeq = sequence.slice(j..j+l as usize);
-        let mut hash: u128 = xorshift_u128(lmer.as_u128());
+        let smer: PackedSeq = sequence.slice(j..j+l as usize);
+        let mut hash: u128 = xorshift_u128(smer.as_u128());
 
 
         for _i in 0..bloom.n_hashes {
