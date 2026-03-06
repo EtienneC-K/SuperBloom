@@ -91,3 +91,97 @@ impl Clone for SuperBitVec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SuperBitVec;
+
+    #[test]
+    fn set_and_get_bits_across_blocks() {
+        let mut bitvec = SuperBitVec::new(130);
+        bitvec.set(0, true);
+        bitvec.set(64, true);
+        bitvec.set(129, true);
+
+        assert!(bitvec.get(0));
+        assert!(bitvec.get(64));
+        assert!(bitvec.get(129));
+        assert!(!bitvec.get(1));
+        assert!(!bitvec.get(128));
+    }
+
+    #[test]
+    fn clearing_bit_restores_false_value() {
+        let mut bitvec = SuperBitVec::new(10);
+        bitvec.set(3, true);
+        assert!(bitvec.get(3));
+        bitvec.set(3, false);
+        assert!(!bitvec.get(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "Index out of SuperBitVec range")]
+    fn setting_out_of_range_panics() {
+        let mut bitvec = SuperBitVec::new(8);
+        bitvec.set(8, true);
+    }
+
+    #[test]
+    fn display_matches_small_bit_pattern() {
+        let mut bitvec = SuperBitVec::new(5);
+        bitvec.set(0, true);
+        bitvec.set(2, true);
+        bitvec.set(4, true);
+
+        assert_eq!(format!("{bitvec}"), "10101");
+    }
+
+    #[test]
+    fn clone_preserves_content() {
+        let mut bitvec = SuperBitVec::new(66);
+        bitvec.set(1, true);
+        bitvec.set(65, true);
+
+        let cloned = bitvec.clone();
+        assert!(cloned.get(1));
+        assert!(cloned.get(65));
+        assert_eq!(cloned.len(), 66);
+    }
+
+    #[test]
+    fn fresh_bitvec_is_all_false() {
+        let bitvec = SuperBitVec::new(70);
+        for idx in 0..70 {
+            assert!(!bitvec.get(idx));
+        }
+    }
+
+    #[test]
+    fn len_matches_requested_size() {
+        let bitvec = SuperBitVec::new(127);
+        assert_eq!(bitvec.len(), 127);
+    }
+
+    #[test]
+    fn setting_last_bit_of_partial_block_works() {
+        let mut bitvec = SuperBitVec::new(65);
+        bitvec.set(64, true);
+        assert!(bitvec.get(64));
+    }
+
+    #[test]
+    fn clearing_unset_bit_keeps_it_false() {
+        let mut bitvec = SuperBitVec::new(12);
+        bitvec.set(7, false);
+        assert!(!bitvec.get(7));
+    }
+
+    #[test]
+    fn display_large_vectors_uses_summary_message() {
+        let bitvec = SuperBitVec::new(9000);
+        assert_eq!(
+            format!("{bitvec}"),
+            "SuperBitVec of length over 8192 wasn't written."
+        );
+    }
+}

@@ -104,6 +104,9 @@ impl BloomFilter {
 
         //once we have the list, its time to sort it
         let mut unlocked_counts_list = counts_list.lock().unwrap();
+        if unlocked_counts_list.is_empty() {
+            return (0, 0, 0, 0, 0);
+        }
         unlocked_counts_list.par_sort_unstable();
 
         //now to calculate what we're looking for
@@ -210,7 +213,7 @@ impl BloomFilter {
     ///returns a positive
     pub fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
         //protection against small sequences
-        if original_sequence.len() > k as usize {
+        if original_sequence.len() < k as usize {
             return vec![];
         }
 
@@ -270,7 +273,7 @@ impl BloomFilter {
 
     pub fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
         //protection against small sequences
-        if original_sequence.len() > k as usize {
+        if original_sequence.len() < k as usize {
             return vec![];
         }
 
@@ -338,4 +341,206 @@ fn _init_hasher(seed: u32, k: usize) -> NtHasher {
     //we build hashers with different seeds
     let hasher = <seq_hash::NtHasher>::new_with_seed(k, seed);
     hasher
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BloomFilter;
+    use crate::decyclers::Decycler;
+    use crate::super_bitvec::SuperBitVec;
+    use crate::utils::xorshift_u64;
+    use packed_seq::{PackedSeqVec, Seq, SeqVec};
+
+    fn insert_sequence_with_decycler(
+        bloom: &BloomFilter,
+        sequence: &PackedSeqVec,
+        k: u16,
+        m: u16,
+        s: u16,
+        decycler: &Decycler,
+    ) {
+        let address_mask = bloom.block_size - 1;
+        let nb_blocks = bloom.nb_blocks;
+        let (super_kmers_positions, minimizer_values, packed) =
+            crate::minimizers::decycling_mins_x_pos(sequence.clone(), k, m, decycler);
+
+        for i in 0..super_kmers_positions.len() {
+            let start = super_kmers_positions[i] as usize;
+            let end = if i == super_kmers_positions.len() - 1 {
+                packed.len() + 1 - k as usize
+            } else {
+                super_kmers_positions[i + 1] as usize
+            };
+            let hashed_minimizer = xorshift_u64(minimizer_values[i]) & (nb_blocks as u64 - 1);
+            let blocknum = (hashed_minimizer as usize) & 1023;
+            let subblocknum = ((hashed_minimizer as usize) >> 10) & ((bloom.nb_blocks >> 10) - 1);
+            let mut block = bloom.filter[blocknum].lock().unwrap();
+            let subblock = &mut block[subblocknum];
+
+            for j in start..end {
+                let kmer = packed.slice(j..j + k as usize);
+                for offset in 0..kmer.len() - s as usize + 1 {
+                    let smer = kmer.slice(offset..offset + s as usize);
+                    if s <= 31 {
+                        let mut hash = xorshift_u64(smer.as_u64());
+                        for _ in 0..bloom.n_hashes {
+                            let address = hash as usize & address_mask;
+                            if !subblock.get(address) {
+                                subblock.set(address, true);
+                            }
+                            hash = xorshift_u64(hash);
+                        }
+                    } else {
+                        let mut hash = crate::utils::xorshift_u128(smer.as_u128());
+                        for _ in 0..bloom.n_hashes {
+                            let address = hash as usize & address_mask;
+                            if !subblock.get(address) {
+                                subblock.set(address, true);
+                            }
+                            hash = crate::utils::xorshift_u128(hash);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn check_and_insert_is_idempotent() {
+        let bloom = BloomFilter::new(1 << 20, 3, 31, 1 << 10, 1 << 10);
+        let mut subblock = bit_vec::BitVec::from_elem(1 << 10, false);
+        let hash = 123456789_u64;
+
+        assert!(!bloom._check_and_insert(&mut subblock, hash));
+        assert!(bloom._check_and_insert(&mut subblock, hash));
+    }
+
+    #[test]
+    fn check_sequence_returns_empty_for_short_sequences() {
+        let bloom = BloomFilter::new(1 << 20, 3, 31, 1 << 10, 1 << 10);
+        let decycler = Decycler::new(1);
+        let sequence = PackedSeqVec::from_ascii(b"ACG");
+
+        assert!(bloom.check_sequence(sequence, 5, 3, 3, &decycler).is_empty());
+    }
+
+    #[test]
+    fn inserted_sequence_is_reported_present() {
+        let bloom = BloomFilter::new(1 << 20, 3, 5, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
+
+        insert_sequence_with_decycler(&bloom, &sequence, 5, 3, 3, &decycler);
+        let results = bloom.check_sequence(sequence, 5, 3, 3, &decycler);
+
+        assert_eq!(results.len(), 4);
+        assert!(results.iter().all(|present| *present));
+    }
+
+    #[test]
+    fn inserted_sequence_is_reported_present_for_u128_path() {
+        let bloom = BloomFilter::new(1 << 20, 3, 40, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        );
+
+        insert_sequence_with_decycler(&bloom, &sequence, 40, 3, 32, &decycler);
+        let results = bloom.check_sequence_u128(sequence, 40, 3, 32, &decycler);
+
+        assert_eq!(results.len(), 9);
+        assert!(results.iter().all(|present| *present));
+    }
+
+    #[test]
+    #[should_panic]
+    fn bloom_new_panics_when_size_is_too_small() {
+        let _ = BloomFilter::new(1024, 3, 31, 2, 1024);
+    }
+
+    #[test]
+    #[should_panic]
+    fn bloom_new_panics_when_nb_blocks_is_too_small() {
+        let _ = BloomFilter::new(1 << 20, 3, 31, 1 << 10, 512);
+    }
+
+    #[test]
+    fn count_it_all_is_zero_for_empty_bloom() {
+        let bloom = BloomFilter::new(1 << 20, 3, 31, 1 << 10, 1 << 10);
+        assert_eq!(bloom.count_it_all(), (0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn count_it_all_reports_non_zero_after_insertion() {
+        let bloom = BloomFilter::new(1 << 20, 3, 5, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
+
+        insert_sequence_with_decycler(&bloom, &sequence, 5, 3, 3, &decycler);
+        let (non_zero, max_fill, median_fill, average_fill, _) = bloom.count_it_all();
+
+        assert!(non_zero > 0);
+        assert!(max_fill > 0);
+        assert!(median_fill > 0);
+        assert!(average_fill > 0);
+    }
+
+    #[test]
+    fn check_kmer_returns_false_on_empty_subblock() {
+        let bloom = BloomFilter::new(1 << 20, 3, 5, 1 << 10, 1 << 10);
+        let mut subblock = SuperBitVec::new(1 << 10);
+        let kmer = PackedSeqVec::from_ascii(b"ACGTA");
+
+        assert!(!bloom.check_kmer(&mut subblock, kmer.as_slice(), 3));
+    }
+
+    #[test]
+    fn check_kmer_u128_returns_false_on_empty_subblock() {
+        let bloom = BloomFilter::new(1 << 20, 3, 40, 1 << 10, 1 << 10);
+        let mut subblock = SuperBitVec::new(1 << 10);
+        let kmer = PackedSeqVec::from_ascii(
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        );
+
+        assert!(!bloom.check_kmer_u128(&mut subblock, kmer.as_slice(), 32));
+    }
+
+    #[test]
+    fn exact_kmer_sequence_is_reported_present() {
+        let bloom = BloomFilter::new(1 << 20, 3, 5, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACGTA");
+
+        insert_sequence_with_decycler(&bloom, &sequence, 5, 3, 3, &decycler);
+        let results = bloom.check_sequence(sequence, 5, 3, 3, &decycler);
+
+        assert_eq!(results, vec![true]);
+    }
+
+    #[test]
+    fn exact_kmer_sequence_is_reported_present_for_u128_path() {
+        let bloom = BloomFilter::new(1 << 20, 3, 40, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        );
+
+        insert_sequence_with_decycler(&bloom, &sequence, 40, 3, 32, &decycler);
+        let results = bloom.check_sequence_u128(sequence, 40, 3, 32, &decycler);
+
+        assert_eq!(results, vec![true]);
+    }
+
+    #[test]
+    fn count_false_positives_returns_minus_one_without_negative_samples() {
+        let bloom = BloomFilter::new(1 << 20, 3, 31, 1 << 10, 1 << 10);
+        let decycler = Decycler::new(1);
+
+        assert_eq!(bloom.count_false_positives(5, 3, 3, 0, 0, &decycler), -1.0);
+    }
 }

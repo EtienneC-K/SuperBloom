@@ -34,3 +34,54 @@ pub fn sum_vec_bool(boolean_vector: &Vec<bool>) -> usize {
     }
     counter
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{_xorshift_u32, sum_vec_bool, xorshift_u64, xorshift_u128};
+
+    #[test]
+    fn xorshift_u64_is_deterministic() {
+        assert_eq!(xorshift_u64(42), xorshift_u64(42));
+        assert_ne!(xorshift_u64(42), 42);
+    }
+
+    #[test]
+    fn xorshift_u128_is_deterministic() {
+        assert_eq!(xorshift_u128(42), xorshift_u128(42));
+        assert_ne!(xorshift_u128(42), 42);
+    }
+
+    #[test]
+    fn sum_vec_bool_counts_true_values() {
+        let values = vec![true, false, true, true, false];
+        assert_eq!(sum_vec_bool(&values), 3);
+    }
+
+    #[test]
+    fn xorshift_u64_zero_stays_zero() {
+        assert_eq!(xorshift_u64(0), 0);
+    }
+
+    #[test]
+    fn xorshift_u128_zero_stays_zero() {
+        assert_eq!(xorshift_u128(0), 0);
+    }
+
+    #[test]
+    fn xorshift_u32_is_deterministic() {
+        assert_eq!(_xorshift_u32(12345), _xorshift_u32(12345));
+        assert_ne!(_xorshift_u32(12345), 12345);
+    }
+
+    #[test]
+    fn sum_vec_bool_empty_vector_is_zero() {
+        let values = vec![];
+        assert_eq!(sum_vec_bool(&values), 0);
+    }
+
+    #[test]
+    fn sum_vec_bool_all_true_counts_every_entry() {
+        let values = vec![true, true, true, true];
+        assert_eq!(sum_vec_bool(&values), 4);
+    }
+}

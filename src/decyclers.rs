@@ -24,7 +24,8 @@ impl Decycler {
 
     ///initialization, creating enough space for all the minimizers
     pub fn new(m: u16) -> Self {
-        let direct_list: Vec<Vec<u64>> = vec![vec![0; CYCLER_BLOCK_SIZE]; (1<<(2*m))>>CYCLER_BLOCK_SHIFTER];
+        let block_count = usize::max(1, (1usize << (2 * m as usize)) >> CYCLER_BLOCK_SHIFTER);
+        let direct_list: Vec<Vec<u64>> = vec![vec![0; CYCLER_BLOCK_SIZE]; block_count];
         init_vec_ci(m);
         Self {
             m,
@@ -130,4 +131,149 @@ pub fn init_vec_ci(m: u16) -> Vec<f64> {
         vec_ci.push((2.0*std::f64::consts::PI*i as f64/m as f64).sin());
     }
     vec_ci
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_membership, init_vec_ci, Decycler};
+    use packed_seq::{PackedSeqVec, Seq, SeqVec};
+
+    fn decode_kmer(mut encoded: u64, m: u16) -> String {
+        let mut chars = vec!['A'; m as usize];
+        for idx in (0..m as usize).rev() {
+            chars[idx] = match encoded & 3 {
+                0 => 'A',
+                1 => 'C',
+                2 => 'G',
+                3 => 'T',
+                _ => unreachable!(),
+            };
+            encoded >>= 2;
+        }
+        chars.into_iter().collect()
+    }
+
+    #[test]
+    fn init_vec_ci_has_expected_shape() {
+        let values = init_vec_ci(4);
+        assert_eq!(values.len(), 4);
+        assert!((values[0] - 0.0).abs() < 1e-12);
+        assert!((values[1] - 1.0).abs() < 1e-12);
+        assert!(values[2].abs() < 1e-12);
+        assert!((values[3] + 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn compute_blocks_matches_direct_membership_for_all_mers_of_size_three() {
+        let m = 3;
+        let vec_ci = init_vec_ci(m);
+        let mut decycler = Decycler::new(m);
+        decycler.compute_blocks();
+
+        for encoded in 0..(1_u64 << (2 * m)) {
+            let kmer = decode_kmer(encoded, m);
+            let packed = PackedSeqVec::from_ascii(kmer.as_bytes());
+            assert_eq!(
+                decycler.lookup(packed.as_slice()),
+                compute_membership(packed.as_slice().as_u64(), m, &vec_ci),
+                "mismatch for {kmer}"
+            );
+        }
+    }
+
+    #[test]
+    fn known_block_contents_are_stable() {
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+
+        assert_eq!(
+            decycler.direct_list[0][0],
+            0b1000110011101111000001001110111100000000001011110000000000000001
+        );
+    }
+
+    #[test]
+    fn new_small_m_allocates_at_least_one_block() {
+        let decycler = Decycler::new(1);
+        assert_eq!(decycler.direct_list.len(), 1);
+        assert_eq!(decycler.direct_list[0].len(), 512);
+    }
+
+    #[test]
+    fn init_vec_ci_for_m_one_is_zero() {
+        let values = init_vec_ci(1);
+        assert_eq!(values.len(), 1);
+        assert!(values[0].abs() < 1e-12);
+    }
+
+    #[test]
+    fn compute_membership_is_deterministic() {
+        let vec_ci = init_vec_ci(4);
+        let kmer = PackedSeqVec::from_ascii(b"ACGT").as_slice().as_u64();
+        assert_eq!(
+            compute_membership(kmer, 4, &vec_ci),
+            compute_membership(kmer, 4, &vec_ci)
+        );
+    }
+
+    #[test]
+    fn lookup_matches_direct_membership_for_all_mers_of_size_one() {
+        let m = 1;
+        let vec_ci = init_vec_ci(m);
+        let mut decycler = Decycler::new(m);
+        decycler.compute_blocks();
+
+        for kmer in [b"A", b"C", b"G", b"T"] {
+            let seq = PackedSeqVec::from_ascii(kmer);
+            let packed = seq.as_slice();
+            assert_eq!(
+                decycler.lookup(packed),
+                compute_membership(packed.as_u64(), m, &vec_ci)
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_matches_direct_membership_for_all_mers_of_size_two() {
+        let m = 2;
+        let vec_ci = init_vec_ci(m);
+        let mut decycler = Decycler::new(m);
+        decycler.compute_blocks();
+
+        for left in [b'A', b'C', b'G', b'T'] {
+            for right in [b'A', b'C', b'G', b'T'] {
+                let kmer = [left, right];
+                let seq = PackedSeqVec::from_ascii(&kmer);
+                let packed = seq.as_slice();
+                assert_eq!(
+                    decycler.lookup(packed),
+                    compute_membership(packed.as_u64(), m, &vec_ci)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lookup_matches_direct_membership_for_specific_size_four_examples() {
+        let m = 4;
+        let vec_ci = init_vec_ci(m);
+        let mut decycler = Decycler::new(m);
+        decycler.compute_blocks();
+
+        for kmer in [b"AAAA", b"ACGT", b"TTTT", b"CGTA"] {
+            let seq = PackedSeqVec::from_ascii(kmer);
+            let packed = seq.as_slice();
+            assert_eq!(
+                decycler.lookup(packed),
+                compute_membership(packed.as_u64(), m, &vec_ci)
+            );
+        }
+    }
+
+    #[test]
+    fn computed_decycler_contains_at_least_one_member_for_m_three() {
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        assert!(decycler.direct_list[0].iter().any(|entry| *entry != 0));
+    }
 }

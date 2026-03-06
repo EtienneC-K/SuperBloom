@@ -390,7 +390,7 @@ fn handle_sequence(
     decycler_set: &Decycler,
     l: u16,
     ) -> u64 {
-    if original_sequence.len() <= k as usize+2 {
+    if original_sequence.len() < k as usize {
         return 0;
     }
     let address_mask: usize = bloom.block_size-1;
@@ -565,4 +565,98 @@ fn write_auto_bench_stdout(
     print_string += &format!("|{}", duration_overhead_decycling.as_secs());
 
     println!("{print_string}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        handle_sequence, handle_super_kmer, handle_super_kmer_u128, BloomFilter, Decycler,
+    };
+    use packed_seq::{PackedSeqVec, SeqVec};
+
+    fn build_bloom(k: usize) -> BloomFilter {
+        BloomFilter::new(1 << 20, 3, k, 1 << 10, 1 << 10)
+    }
+
+    fn build_decycler(m: u16) -> Decycler {
+        let mut decycler = Decycler::new(m);
+        decycler.compute_blocks();
+        decycler
+    }
+
+    #[test]
+    fn handle_sequence_returns_zero_for_short_inputs() {
+        let bloom = build_bloom(5);
+        let decycler = build_decycler(3);
+        let sequence = PackedSeqVec::from_ascii(b"ACGT");
+        let mut addresses = vec![0; 64];
+
+        assert_eq!(
+            handle_sequence(&bloom, sequence, 5, 3, 1 << 10, false, &mut addresses, &decycler, 3),
+            0
+        );
+    }
+
+    #[test]
+    fn handle_sequence_no_bloom_returns_non_zero_hash_sum() {
+        let bloom = build_bloom(5);
+        let decycler = build_decycler(3);
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
+        let mut addresses = vec![0; 64];
+
+        let sum = handle_sequence(&bloom, sequence, 5, 3, 1 << 10, true, &mut addresses, &decycler, 3);
+        assert_ne!(sum, 0);
+    }
+
+    #[test]
+    fn handle_sequence_populates_bloom_for_u64_queries() {
+        let bloom = build_bloom(5);
+        let decycler = build_decycler(3);
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
+        let mut addresses = vec![0; 64];
+
+        let _ = handle_sequence(&bloom, sequence.clone(), 5, 3, 1 << 10, false, &mut addresses, &decycler, 3);
+        let results = bloom.check_sequence(sequence, 5, 3, 3, &decycler);
+
+        assert_eq!(results.len(), 4);
+        assert!(results.iter().all(|present| *present));
+    }
+
+    #[test]
+    fn handle_sequence_populates_bloom_for_u128_queries() {
+        let bloom = build_bloom(40);
+        let decycler = build_decycler(3);
+        let sequence = PackedSeqVec::from_ascii(
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        );
+        let mut addresses = vec![0; 256];
+
+        let _ = handle_sequence(&bloom, sequence.clone(), 40, 3, 1 << 10, false, &mut addresses, &decycler, 32);
+        let results = bloom.check_sequence_u128(sequence, 40, 3, 32, &decycler);
+
+        assert_eq!(results.len(), 9);
+        assert!(results.iter().all(|present| *present));
+    }
+
+    #[test]
+    fn handle_super_kmer_returns_updated_counter() {
+        let bloom = build_bloom(5);
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
+        let mut addresses = vec![0; 64];
+
+        let count = handle_super_kmer(0, 2, &sequence, &bloom, 5, 0, 7, &mut addresses, (1 << 10) - 1, 3);
+        assert_eq!(count, 11);
+    }
+
+    #[test]
+    fn handle_super_kmer_u128_returns_updated_counter() {
+        let bloom = build_bloom(40);
+        let sequence = PackedSeqVec::from_ascii(
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
+        );
+        let mut addresses = vec![0; 256];
+
+        let count = handle_super_kmer_u128(0, 2, &sequence, &bloom, 40, 0, 5, &mut addresses, (1 << 10) - 1, 32);
+        assert_eq!(count, 15);
+    }
 }

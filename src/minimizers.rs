@@ -39,7 +39,7 @@ pub fn decycling_mins_x_pos (packed_seq: PackedSeqVec, k: u16, m: u16, decycler_
     -> (Vec<u32>, Vec<u64>, PackedSeqVec) {
 
     //protection against sequences too short
-    if packed_seq.len() <= k as usize+2 {
+    if packed_seq.len() < k as usize {
         return ([].to_vec(), [].to_vec(), packed_seq);
     }
 
@@ -106,4 +106,125 @@ fn mins_from_kmer<'a>(packed_seq: PackedSeq<'a>, is_decycler: &Vec<bool>, i: usi
         if is_decycler[j] {return (j, true, packed_seq.slice(j..j+m as usize))};
     }
     (i, false, packed_seq.slice(i..i+m as usize))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decycling_mins_x_pos, minimizers_x_positions, mins_from_kmer};
+    use crate::decyclers::Decycler;
+    use packed_seq::{PackedSeqVec, Seq, SeqVec};
+
+    #[test]
+    fn simd_minimizers_return_aligned_positions_and_values() {
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGTAC");
+        let (super_kmers, minimizers, original) = minimizers_x_positions(sequence.clone(), 5, 3);
+
+        assert_eq!(original.len(), sequence.len());
+        assert!(!super_kmers.is_empty());
+        assert_eq!(super_kmers.len(), minimizers.len());
+        assert_eq!(super_kmers[0], 0);
+        assert!(super_kmers.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn decycling_minimizers_return_empty_for_short_sequences() {
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACG");
+        let (super_kmers, minimizers, original) = decycling_mins_x_pos(sequence.clone(), 4, 3, &decycler);
+
+        assert!(super_kmers.is_empty());
+        assert!(minimizers.is_empty());
+        assert_eq!(original.len(), sequence.len());
+    }
+
+    #[test]
+    fn decycling_minimizers_return_monotonic_super_kmer_starts() {
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGTACGT");
+        let (super_kmers, minimizers, _) = decycling_mins_x_pos(sequence, 5, 3, &decycler);
+
+        assert!(!super_kmers.is_empty());
+        assert_eq!(super_kmers.len(), minimizers.len());
+        assert_eq!(super_kmers[0], 0);
+        assert!(super_kmers.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn mins_from_kmer_prefers_first_decycling_candidate() {
+        let sequence = PackedSeqVec::from_ascii(b"ACGTAC");
+        let is_decycler = vec![false, true, true, false];
+        let (addr, is_member, minimizer) = mins_from_kmer(sequence.as_slice(), &is_decycler, 0, 3, 5);
+
+        assert_eq!(addr, 1);
+        assert!(is_member);
+        assert_eq!(minimizer.as_u64(), sequence.slice(1..4).as_u64());
+    }
+
+    #[test]
+    fn mins_from_kmer_falls_back_to_window_start_when_needed() {
+        let sequence = PackedSeqVec::from_ascii(b"ACGTAC");
+        let is_decycler = vec![false, false, false, false];
+        let (addr, is_member, minimizer) = mins_from_kmer(sequence.as_slice(), &is_decycler, 0, 3, 5);
+
+        assert_eq!(addr, 0);
+        assert!(!is_member);
+        assert_eq!(minimizer.as_u64(), sequence.slice(0..3).as_u64());
+    }
+
+    #[test]
+    fn mins_from_kmer_ignores_candidates_outside_window() {
+        let sequence = PackedSeqVec::from_ascii(b"ACGTAC");
+        let is_decycler = vec![false, false, false, true];
+        let (addr, is_member, minimizer) = mins_from_kmer(sequence.as_slice(), &is_decycler, 0, 3, 5);
+
+        assert_eq!(addr, 0);
+        assert!(!is_member);
+        assert_eq!(minimizer.as_u64(), sequence.slice(0..3).as_u64());
+    }
+
+    #[test]
+    fn simd_minimizers_support_exact_kmer_length() {
+        let sequence = PackedSeqVec::from_ascii(b"ACGTA");
+        let (super_kmers, minimizers, _) = minimizers_x_positions(sequence, 5, 3);
+
+        assert_eq!(super_kmers.len(), 1);
+        assert_eq!(minimizers.len(), 1);
+        assert_eq!(super_kmers[0], 0);
+    }
+
+    #[test]
+    fn simd_minimizers_return_original_sequence_unchanged() {
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
+        let expected = sequence.as_slice().as_u64();
+        let (_, _, original) = minimizers_x_positions(sequence, 5, 3);
+
+        assert_eq!(original.as_slice().as_u64(), expected);
+    }
+
+    #[test]
+    fn decycling_minimizers_become_non_empty_at_k_plus_three() {
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACG");
+        let (super_kmers, minimizers, _) = decycling_mins_x_pos(sequence, 4, 3, &decycler);
+
+        assert!(!super_kmers.is_empty());
+        assert_eq!(super_kmers.len(), minimizers.len());
+    }
+
+    #[test]
+    fn decycling_minimizer_values_fit_requested_mmer_width() {
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let sequence = PackedSeqVec::from_ascii(b"ACGTACGTACGT");
+        let (super_kmers, minimizers, original) = decycling_mins_x_pos(sequence, 5, 3, &decycler);
+
+        assert_eq!(super_kmers.len(), minimizers.len());
+        for minimizer in minimizers {
+            assert!(minimizer < (1 << 6));
+        }
+        assert_eq!(original.len(), 12);
+    }
 }
