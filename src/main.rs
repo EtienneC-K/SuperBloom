@@ -158,7 +158,7 @@ pub fn main() {
 
 
         //if some expert parameters specified but flag is down, warning
-        if args.m != m
+        if args.m != 11
         || args.size != size
         || args.block_size != block_size
         || args.sequential_fallback != sequential_fallback
