@@ -128,7 +128,9 @@ pub fn main() {
     //defining all variables constants that are based on the argument input
     let k: u16 = args.k;
     let n_hashes: usize = args.n_hashes;
-    let s: u16 = args.s;
+    let s: u16 = if args.s > 0 {args.s} else {k-3};
+    assert!(s > 0);
+    assert!(s < 62);
 
     let m: u16;
     let mut size: usize;
