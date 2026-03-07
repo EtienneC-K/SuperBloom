@@ -31,7 +31,11 @@ use std::time::{Duration, Instant};
 #[command(version, about, long_about = None)]
 struct Args {
     ///path to the file to fill the bloom filter
-    input: String,
+    input: Option<String>,
+
+    ///path to the indexed file to fill the bloom filter
+    #[arg(long)]
+    indexed_file: Option<String>,
 
     ///path to a file containing the sequences to be queried
     #[arg(long, default_value_t = String::from(""))]
@@ -118,6 +122,7 @@ pub fn main() {
     unsafe {
         env::set_var("RUST_BACKTRACE", "full");
     }
+    let whole_run_start = Instant::now();
     //checking the arguments do make some sense
     let args = Args::parse();
     assert!(args.ram >= 1);
@@ -196,7 +201,7 @@ pub fn main() {
         env::set_var("RAYON_NUM_THREADS", args.threads);
     }
 
-    let filename = args.input;
+    let filename = resolve_input_path(args.input.as_deref(), args.indexed_file.as_deref());
 
     //we create the needed data structures to store everything
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
@@ -215,10 +220,13 @@ pub fn main() {
 
     //anti optims variable
     let kmer_sum: Mutex<u64> = Mutex::new(0);
+    let inserted_kmer_count: Mutex<u64> = Mutex::new(0);
+    let queried_kmer_count: Mutex<u64> = Mutex::new(0);
 
     //used to check for false negative rate at the end
     let false_neg_list: Mutex<Vec<PackedSeqVec>> = Mutex::new(Vec::new());
 
+    let indexing_start = Instant::now();
     {
         let reader = parse_fastx_file(&filename).expect("valid path/file");
 
@@ -249,7 +257,10 @@ pub fn main() {
 
                 if only_parse {
                     block_lines_counter += sequence.len();
-                } else if sequence.len() >= k as usize+2 {
+                } else if sequence.len() >= k as usize {
+                    let mut total_inserted = inserted_kmer_count.lock().unwrap();
+                    *total_inserted += (sequence.len() + 1 - k as usize) as u64;
+                    drop(total_inserted);
                     let local_kmer_sum =
                         handle_sequence(&bloom, sequence, k, m, nb_blocks,
                         no_bloom, &mut all_addresses, &decycler_set, s);
@@ -268,7 +279,9 @@ pub fn main() {
             }
         })
     }
+    let indexing_duration = indexing_start.elapsed();
 
+    let query_start = Instant::now();
     if args.query_file != "" {
         //this means that we do have to query
         let query_counter: Mutex<usize> = Mutex::new(0);
@@ -301,6 +314,9 @@ pub fn main() {
             *q_count_pos += local_pos_count;
             drop(q_count);
             drop(q_count_pos);
+            let mut total_queried = queried_kmer_count.lock().unwrap();
+            *total_queried += local_count as u64;
+            drop(total_queried);
         });
 
         if !auto_bench {
@@ -309,26 +325,32 @@ pub fn main() {
             println!("Number of kmer queried : {q_count}");
             println!("Number of positives : {q_count_pos}");
         }
-    } else {
-        println!("apparement on va pas query {0}", args.query_file);
     }
+    let query_duration = query_start.elapsed();
 
     let false_negs = false_neg_list.lock().unwrap().to_vec();
     let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, s, &decycler_set);
+    let whole_run_duration = whole_run_start.elapsed();
     if !auto_bench {
-        println!("false negative rate : {false_negative_rate}");
-        println!("false positive rate : {false_positive_rate}");
-        println!("-----------------------------------------------------------------");
+        let inserted_kmers = inserted_kmer_count.lock().unwrap();
+        let queried_kmers = queried_kmer_count.lock().unwrap();
+        let whole_run_ns = whole_run_duration.as_nanos() as f64;
+        println!("inserted kmers : {inserted_kmers}");
+        if *inserted_kmers > 0 {
+            println!("ns per inserted kmer : {}", whole_run_ns / *inserted_kmers as f64);
+        } else {
+            println!("ns per inserted kmer : N/A");
+        }
+        if *queried_kmers > 0 {
+            println!("ns per queried kmer : {}", whole_run_ns / *queried_kmers as f64);
+        } else {
+            println!("ns per queried kmer : N/A");
+        }
+        println!("total indexing time (s) : {}", indexing_duration.as_secs_f64());
+        println!("total query time (s) : {}", query_duration.as_secs_f64());
     }
     
     //to prevent optims
-    if only_parse {
-        let total_counter = kmer_sum.lock().unwrap();
-        print!("Antim optim counter {total_counter}");
-    }
-
-
-
     //printing only a line for the benchmark evaluating programm if option --auto-bench if on
     if auto_bench {
         write_auto_bench_stdout(
@@ -342,15 +364,10 @@ pub fn main() {
             )
     }
     else {
-        println!("------------------------------------------------------------");
-        println!("");
         println!("Parameters : ");
         println!("k : {k}, m: {m}");
         println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
-        println!("sequetial fallback : {sequential_fallback}");
- 
-        println!("");
- 
+
         if counting {
 
             if !no_bloom {
@@ -368,14 +385,16 @@ pub fn main() {
                 println!("Average fill rate : {average_bloom_rate}");
                 println!("Overfilled rate : {overfilled_rate}");
             }
-
-            println!("");
         }
+    }
+}
 
-        println!("");
-        let anti_optim_count = *kmer_sum.lock().unwrap();
-        println!("anti optim count {anti_optim_count}");
-        println!("------------------------------------------------------------");
+fn resolve_input_path(input: Option<&str>, indexed_file: Option<&str>) -> String {
+    match (input, indexed_file) {
+        (Some(path), None) => path.to_owned(),
+        (None, Some(path)) => path.to_owned(),
+        (None, None) => panic!("an input file path is required"),
+        (Some(_), Some(_)) => panic!("use either the positional input or --indexed-file, not both"),
     }
 }
 
@@ -570,7 +589,7 @@ fn write_auto_bench_stdout(
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_sequence, handle_super_kmer, handle_super_kmer_u128, BloomFilter, Decycler,
+        handle_sequence, handle_super_kmer, handle_super_kmer_u128, resolve_input_path, BloomFilter, Decycler,
     };
     use packed_seq::{PackedSeqVec, SeqVec};
 
@@ -658,5 +677,29 @@ mod tests {
 
         let count = handle_super_kmer_u128(0, 2, &sequence, &bloom, 40, 0, 5, &mut addresses, (1 << 10) - 1, 32);
         assert_eq!(count, 15);
+    }
+
+    #[test]
+    fn resolve_input_path_returns_positional_input() {
+        let path = resolve_input_path(Some("reads.fa"), None);
+        assert_eq!(path, "reads.fa");
+    }
+
+    #[test]
+    fn resolve_input_path_returns_indexed_option_path() {
+        let path = resolve_input_path(None, Some("indexed.fa"));
+        assert_eq!(path, "indexed.fa");
+    }
+
+    #[test]
+    #[should_panic(expected = "an input file path is required")]
+    fn resolve_input_path_requires_one_input_source() {
+        let _ = resolve_input_path(None, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "use either the positional input or --indexed-file, not both")]
+    fn resolve_input_path_rejects_both_input_sources() {
+        let _ = resolve_input_path(Some("reads.fa"), Some("indexed.fa"));
     }
 }
