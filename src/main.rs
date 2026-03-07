@@ -13,7 +13,7 @@ pub mod minimizers;
 use input::{Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
-use bloom::BloomFilter;
+use bloom::{BloomFilter, FrozenBloomFilter};
 use utils::{xorshift_u64, xorshift_u128, sum_vec_bool};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
@@ -283,6 +283,7 @@ pub fn main() {
         })
     }
     let indexing_duration = indexing_start.elapsed();
+    let frozen_bloom = bloom.into_frozen();
 
     let query_start = Instant::now();
     if args.query_file != "" {
@@ -304,9 +305,9 @@ pub fn main() {
                 let sequence = PackedSeqVec::from_ascii(&line);
                 let presence_vec: Vec<bool>;
                 if s<=31 {
-                    presence_vec = bloom.check_sequence(sequence, k, m, s, &decycler_set);
+                    presence_vec = frozen_bloom.check_sequence(sequence, k, m, s, &decycler_set);
                 } else {
-                    presence_vec = bloom.check_sequence_u128(sequence, k, m, s, &decycler_set);
+                    presence_vec = frozen_bloom.check_sequence_u128(sequence, k, m, s, &decycler_set);
                 }
                 local_count += presence_vec.len();
                 local_pos_count += sum_vec_bool(&presence_vec);
@@ -331,7 +332,7 @@ pub fn main() {
 
     let (false_negative_rate, false_positive_rate) = if counting {
         let false_negs = false_neg_list.lock().unwrap().to_vec();
-        bloom.count_false_bloom(false_negs, k, m, s, &decycler_set)
+        frozen_bloom.count_false_bloom(false_negs, k, m, s, &decycler_set)
     } else {
         (0.0, 0.0)
     };
@@ -360,7 +361,7 @@ pub fn main() {
     if auto_bench {
         write_auto_bench_stdout(
             no_bloom, 
-            bloom,
+            frozen_bloom,
             nb_blocks,
             block_size,
             false_negative_rate,
@@ -376,7 +377,7 @@ pub fn main() {
         if counting {
 
             if !no_bloom {
-                let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = bloom.count_it_all();
+                let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = frozen_bloom.count_it_all();
                 let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
                 let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
                 let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
@@ -557,7 +558,7 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
 
 fn write_auto_bench_stdout(
     no_bloom : bool, 
-    bloom: BloomFilter,
+    bloom: FrozenBloomFilter,
     nb_blocks: usize,
     block_size: usize,
     false_positive_rate: f64,

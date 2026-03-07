@@ -8,7 +8,7 @@ use bit_vec::BitVec;
 use super_bitvec::SuperBitVec;
 use std::sync::Mutex;
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use rayon::prelude::ParallelSliceMut;
+use rayon::prelude::{IntoParallelRefIterator, ParallelSliceMut};
 use std::ops::Deref;
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use decyclers::Decycler;
@@ -18,6 +18,14 @@ use rand::prelude::*;
 
 pub struct BloomFilter {
     pub filter: Vec<Mutex<Vec<SuperBitVec>>>,
+    pub block_size: usize,
+    pub nb_blocks: usize,
+    pub n_hashes: usize,
+    block_size_mask: usize,
+}
+
+pub struct FrozenBloomFilter {
+    pub filter: Vec<Vec<SuperBitVec>>,
     pub block_size: usize,
     pub nb_blocks: usize,
     pub n_hashes: usize,
@@ -48,6 +56,21 @@ impl BloomFilter {
     pub fn new(size: usize, n_hashes: usize, k: usize, block_size: usize, nb_blocks: usize) -> Self {
         let seed: u32 = 42;
         Self::new_with_seed(size, n_hashes, seed, k, block_size, nb_blocks)
+    }
+
+    pub fn into_frozen(self) -> FrozenBloomFilter {
+        let filter = self
+            .filter
+            .into_iter()
+            .map(|block| block.into_inner().unwrap())
+            .collect();
+        FrozenBloomFilter {
+            filter,
+            block_size: self.block_size,
+            nb_blocks: self.nb_blocks,
+            n_hashes: self.n_hashes,
+            block_size_mask: self.block_size_mask,
+        }
     }
 
     ///checks if the kmer with specified minimizer hash, and multiple hashes is
@@ -333,6 +356,229 @@ impl BloomFilter {
 
 
 
+}
+
+impl FrozenBloomFilter {
+    ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
+    ///returns : count of non empty blocks, max filled count, median filled count, avrg filled count
+    pub fn count_it_all(&self) -> (usize, usize, usize, usize, usize) {
+        let counts_list: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        let total_counter: Mutex<usize> = Mutex::new(0);
+        let filled_counter: Mutex<usize> = Mutex::new(0);
+        let _ = &self.filter.par_iter().for_each(|block| {
+            for bit_vector in block {
+                let mut counter: usize = 0;
+                for i in 0..bit_vector.len() {
+                    if bit_vector.get(i) {
+                        counter += 1;
+                    }
+                }
+                if counter > 0 {
+                    let mut el_liste = counts_list.lock().unwrap();
+                    el_liste.push(counter);
+                    drop(el_liste);
+                    let mut el_counter = total_counter.lock().unwrap();
+                    *el_counter = el_counter.saturating_add(counter);
+                    drop(el_counter)
+                }
+
+                let threshhold: f64 = 0.9;
+                if counter as f64/self.block_size as f64 > threshhold {
+                    let mut el_filled_counter = filled_counter.lock().unwrap();
+                    *el_filled_counter = el_filled_counter.saturating_add(1);
+                    drop(el_filled_counter);
+                }
+            }
+        });
+
+        let mut unlocked_counts_list = counts_list.lock().unwrap();
+        if unlocked_counts_list.is_empty() {
+            return (0, 0, 0, 0, 0);
+        }
+        unlocked_counts_list.par_sort_unstable();
+
+        let non_zero_counters: usize = unlocked_counts_list.len();
+        let max_counter: usize = unlocked_counts_list[unlocked_counts_list.len()-1];
+        let median_counter: usize = unlocked_counts_list[unlocked_counts_list.len()/2 - 1];
+        let average_counter: usize = *total_counter.lock().unwrap()/unlocked_counts_list.len();
+        let filled_count = *filled_counter.lock().unwrap();
+
+        (non_zero_counters, max_counter, median_counter, average_counter, filled_count)
+    }
+
+    pub fn count_false_bloom(&self, to_check: Vec<PackedSeqVec>, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (f64, f64) {
+        let (false_negs, total_neg_tests, nb_seq_neg_tests) = self.count_false_negatives(to_check, k, m, l, decycler_set);
+        let false_pos = self.count_false_positives(k, m, l, total_neg_tests, nb_seq_neg_tests, decycler_set);
+        (false_negs, false_pos)
+    }
+
+    pub fn count_false_negatives(
+        &self,
+        to_check : Vec<PackedSeqVec>,
+        k: u16,
+        m: u16,
+        l: u16,
+        decycler_set: &Decycler,
+    ) -> (f64, usize, usize) {
+        let nb_seq_neg_tests: usize = to_check.len();
+        let mut false_negative_count: usize = 0;
+        let mut total_count: usize = 0;
+        for sequence in to_check {
+            total_count += sequence.len()-(k as usize)+1;
+            let count_false: usize;
+            if l <= 31 {
+                let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set);
+                count_false = presence_vec.len()-sum_vec_bool(&presence_vec);
+            } else {
+                let presence_vec = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+                count_false = presence_vec.len()-sum_vec_bool(&presence_vec);
+            }
+            false_negative_count += count_false;
+        }
+        let false_proportion: f64 = false_negative_count as f64/total_count as f64;
+        (false_proportion, total_count, nb_seq_neg_tests)
+    }
+
+    pub fn count_false_positives(&self, k: u16, m: u16, l: u16,
+        total_false_negs: usize,
+        nb_sequence_false_negs: usize,
+        decycler_set: &Decycler,
+    ) -> f64 {
+        if nb_sequence_false_negs < 1 {
+            return -1.0;
+        }
+
+        let mut total_false_pos: usize = 0;
+        let avg_len: usize = total_false_negs/nb_sequence_false_negs;
+        for _i in 0..nb_sequence_false_negs {
+            total_false_pos += self.make_n_check_sequence(k, m, l, avg_len, decycler_set);
+        }
+
+        total_false_pos as f64/((avg_len-k as usize)*nb_sequence_false_negs) as f64
+    }
+
+    fn make_n_check_sequence(&self, k: u16, m: u16, l: u16, avg_len: usize, decycler_set: &Decycler) -> usize {
+        let mut rng = rand::rng();
+        let mut seq: String = String::from("");
+        let rand_mapping: String = String::from("ACGT");
+        for _i in 0..avg_len {
+            let mut rand_num: u8 = rng.random::<u8>();
+            rand_num %= 4;
+            seq.push(rand_mapping.as_bytes()[rand_num as usize] as char);
+        }
+        let sequence: PackedSeqVec = PackedSeqVec::from_ascii(seq.as_bytes());
+
+        let count_true: usize;
+        if l <= 31 {
+            let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set);
+            count_true = sum_vec_bool(&presence_vec);
+        } else {
+            let presence_vec = self.check_sequence_u128(sequence, k, m, l, decycler_set);
+            count_true = sum_vec_bool(&presence_vec);
+        }
+
+        count_true
+    }
+
+    pub fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
+        if original_sequence.len() < k as usize {
+            return vec![];
+        }
+
+        let mut presence_vec: Vec<bool> = Vec::with_capacity(original_sequence.len()-k as usize+1);
+        let address_mask = (self.nb_blocks-1)>>10;
+
+        let (super_kmers_positions, minimizers, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec);
+        if decycler_set.m > 1 {
+            (super_kmers_positions, minimizers, sequence) =
+                decycling_mins_x_pos(original_sequence, k, m, decycler_set);
+        } else {
+            (super_kmers_positions, minimizers, sequence) =
+                minimizers_x_positions(original_sequence, k, m);
+        }
+
+        for i in 0..super_kmers_positions.len() {
+            let hashed_minimizer: u64 = xorshift_u64(minimizers[i]);
+            let start_pos: usize = super_kmers_positions[i] as usize;
+            let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize}
+                                    else {super_kmers_positions[i+1] as usize};
+            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
+            let subblock = &self.filter[blocknum][subblocknum];
+
+            for j in start_pos..end_pos {
+                let kmer: PackedSeq = sequence.slice(j..j+k as usize);
+                let present: bool = self.check_kmer(subblock, kmer, s);
+                presence_vec.push(present);
+            }
+        }
+        presence_vec
+    }
+
+    fn check_kmer(&self, subblock: &SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
+        for i in 0..kmer.len()-s as usize +1 {
+            let smer = kmer.slice(i..i+s as usize);
+            let mut hash = xorshift_u64(smer.as_u64());
+            for _j in 0..self.n_hashes {
+                let address = hash as usize&self.block_size_mask;
+                if !subblock.get(address) {
+                    return false
+                }
+                hash = xorshift_u64(hash);
+            }
+        }
+        true
+    }
+
+    pub fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
+        if original_sequence.len() < k as usize {
+            return vec![];
+        }
+
+        let mut presence_vec: Vec<bool> = Vec::with_capacity(original_sequence.len()-k as usize+1);
+        let address_mask = (self.nb_blocks-1)>>10;
+
+        let (super_kmers_positions, minimizers, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec);
+        if decycler_set.m > 1 {
+            (super_kmers_positions, minimizers, sequence) =
+                decycling_mins_x_pos(original_sequence, k, m, decycler_set);
+        } else {
+            (super_kmers_positions, minimizers, sequence) =
+                minimizers_x_positions(original_sequence, k, m);
+        }
+
+        for i in 0..super_kmers_positions.len() {
+            let hashed_minimizer: u64 = xorshift_u64(minimizers[i]);
+            let start_pos: usize = super_kmers_positions[i] as usize;
+            let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize}
+                                    else {super_kmers_positions[i+1] as usize};
+            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
+            let subblock = &self.filter[blocknum][subblocknum];
+
+            for j in start_pos..end_pos {
+                let kmer: PackedSeq = sequence.slice(j..j+k as usize);
+                let present: bool = self.check_kmer_u128(subblock, kmer, s);
+                presence_vec.push(present);
+            }
+        }
+        presence_vec
+    }
+
+    fn check_kmer_u128(&self, subblock: &SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
+        for i in 0..kmer.len()-s as usize+1 {
+            let smer = kmer.slice(i..i+s as usize);
+            let mut hash = xorshift_u128(smer.as_u128());
+            for _j in 0..self.n_hashes {
+                let address = hash as usize&self.block_size_mask;
+                if !subblock.get(address) {
+                    return false
+                }
+                hash = xorshift_u128(hash);
+            }
+        }
+        true
+    }
 }
 
 
