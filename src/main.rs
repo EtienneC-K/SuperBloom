@@ -20,6 +20,7 @@ use std::env; //for backtrace
 use rayon::prelude::*;
 use clap::Parser;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use needletail::parse_fastx_file;
 use rand::Rng;
 use std::time::{Duration, Instant};
@@ -219,9 +220,9 @@ pub fn main() {
     duration_overhead_decycling = debut.elapsed();
 
     //anti optims variable
-    let kmer_sum: Mutex<u64> = Mutex::new(0);
-    let inserted_kmer_count: Mutex<u64> = Mutex::new(0);
-    let queried_kmer_count: Mutex<u64> = Mutex::new(0);
+    let kmer_sum = AtomicU64::new(0);
+    let inserted_kmer_count = AtomicU64::new(0);
+    let queried_kmer_count = AtomicU64::new(0);
 
     //used to check for false negative rate at the end
     let false_neg_list: Mutex<Vec<PackedSeqVec>> = Mutex::new(Vec::new());
@@ -237,6 +238,8 @@ pub fn main() {
 
         chunked_lines.par_bridge().for_each(|chunk| {
             let mut block_lines_counter: usize = 0;
+            let mut local_inserted_kmer_count: u64 = 0;
+            let mut local_kmer_sum_total: u64 = 0;
 
             //to reduce number of created and destroyed vectors throughout
             let mut all_addresses: Vec<usize> = vec![0; 7*(2*k-m) as usize];
@@ -248,34 +251,34 @@ pub fn main() {
                 let sequence = PackedSeqVec::from_ascii(&line);
 
                 //roll a dice to add to the false negatives checker
-                let dice_roll = rand::rng().random_range(0..5000);
-                if dice_roll == 0 {
-                    let mut false_negs = false_neg_list.lock().unwrap();
-                    false_negs.push(sequence.clone());
-                    drop(false_negs);
+                if counting {
+                    let dice_roll = rand::rng().random_range(0..5000);
+                    if dice_roll == 0 {
+                        let mut false_negs = false_neg_list.lock().unwrap();
+                        false_negs.push(sequence.clone());
+                        drop(false_negs);
+                    }
                 }
 
                 if only_parse {
                     block_lines_counter += sequence.len();
                 } else if sequence.len() >= k as usize {
-                    let mut total_inserted = inserted_kmer_count.lock().unwrap();
-                    *total_inserted += (sequence.len() + 1 - k as usize) as u64;
-                    drop(total_inserted);
+                    local_inserted_kmer_count += (sequence.len() + 1 - k as usize) as u64;
                     let local_kmer_sum =
                         handle_sequence(&bloom, sequence, k, m, nb_blocks,
                         no_bloom, &mut all_addresses, &decycler_set, s);
                     if no_bloom {
-                        let mut total_sum = kmer_sum.lock().unwrap();
-                        *total_sum = total_sum.wrapping_add(local_kmer_sum);
-                        drop(total_sum);
+                        local_kmer_sum_total = local_kmer_sum_total.wrapping_add(local_kmer_sum);
                     }
                 }
 
             }
+            inserted_kmer_count.fetch_add(local_inserted_kmer_count, Ordering::Relaxed);
+            if no_bloom {
+                kmer_sum.fetch_add(local_kmer_sum_total, Ordering::Relaxed);
+            }
             if only_parse {
-                let mut total_sum = kmer_sum.lock().unwrap();
-                *total_sum = total_sum.wrapping_add(block_lines_counter as u64);
-                drop(total_sum);
+                kmer_sum.fetch_add(block_lines_counter as u64, Ordering::Relaxed);
             }
         })
     }
@@ -314,9 +317,7 @@ pub fn main() {
             *q_count_pos += local_pos_count;
             drop(q_count);
             drop(q_count_pos);
-            let mut total_queried = queried_kmer_count.lock().unwrap();
-            *total_queried += local_count as u64;
-            drop(total_queried);
+            queried_kmer_count.fetch_add(local_count as u64, Ordering::Relaxed);
         });
 
         if !auto_bench {
@@ -328,21 +329,25 @@ pub fn main() {
     }
     let query_duration = query_start.elapsed();
 
-    let false_negs = false_neg_list.lock().unwrap().to_vec();
-    let (false_negative_rate, false_positive_rate) = bloom.count_false_bloom(false_negs, k, m, s, &decycler_set);
+    let (false_negative_rate, false_positive_rate) = if counting {
+        let false_negs = false_neg_list.lock().unwrap().to_vec();
+        bloom.count_false_bloom(false_negs, k, m, s, &decycler_set)
+    } else {
+        (0.0, 0.0)
+    };
     let whole_run_duration = whole_run_start.elapsed();
     if !auto_bench {
-        let inserted_kmers = inserted_kmer_count.lock().unwrap();
-        let queried_kmers = queried_kmer_count.lock().unwrap();
+        let inserted_kmers = inserted_kmer_count.load(Ordering::Relaxed);
+        let queried_kmers = queried_kmer_count.load(Ordering::Relaxed);
         let whole_run_ns = whole_run_duration.as_nanos() as f64;
         println!("inserted kmers : {inserted_kmers}");
-        if *inserted_kmers > 0 {
-            println!("ns per inserted kmer : {}", whole_run_ns / *inserted_kmers as f64);
+        if inserted_kmers > 0 {
+            println!("ns per inserted kmer : {}", whole_run_ns / inserted_kmers as f64);
         } else {
             println!("ns per inserted kmer : N/A");
         }
-        if *queried_kmers > 0 {
-            println!("ns per queried kmer : {}", whole_run_ns / *queried_kmers as f64);
+        if queried_kmers > 0 {
+            println!("ns per queried kmer : {}", whole_run_ns / queried_kmers as f64);
         } else {
             println!("ns per queried kmer : N/A");
         }
