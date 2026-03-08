@@ -7,9 +7,10 @@ use seq_hash::NtHasher;
 use bit_vec::BitVec;
 use super_bitvec::SuperBitVec;
 use std::sync::Mutex;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+#[cfg(test)]
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
 use rayon::prelude::{IntoParallelRefIterator, ParallelSliceMut};
-use std::ops::Deref;
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use decyclers::Decycler;
 use utils::{xorshift_u64, xorshift_u128, sum_vec_bool};
@@ -92,6 +93,8 @@ impl BloomFilter {
 
     ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
     ///returns : count of non empty blocks, max filled count, median filled count, avrg filled count
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_it_all(&self) -> (usize, usize, usize, usize, usize) {
         //first make a list with all non zero rates
         let counts_list: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -99,7 +102,7 @@ impl BloomFilter {
         let filled_counter: Mutex<usize> = Mutex::new(0);
         let _ = &self.filter.iter().par_bridge().for_each(|block| {
             let unlocked_block = block.lock().unwrap(); //its a Vec<BitVec>
-            for bit_vector in unlocked_block.deref() {
+            for bit_vector in unlocked_block.iter() {
                 let mut counter: usize = 0;
                 for i in 0..bit_vector.len() {
                     if bit_vector.get(i) {
@@ -143,6 +146,8 @@ impl BloomFilter {
     }
 
     ///checks the false negative and false positive counts of the bloom filter
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_false_bloom(&self, to_check: Vec<PackedSeqVec>, k: u16, m: u16, l: u16, decycler_set: &Decycler) -> (f64, f64) {
         let (false_negs, total_neg_tests, nb_seq_neg_tests) = self.count_false_negatives(to_check, k, m, l, decycler_set);
         let false_pos = self.count_false_positives(k, m, l, total_neg_tests, nb_seq_neg_tests, decycler_set);
@@ -152,6 +157,8 @@ impl BloomFilter {
 
     ///using a set of kmer that where supposed to be inserted, and randomly generated kmers checks
     ///the rates of false negatives 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_false_negatives (
         &self,
         to_check : Vec<PackedSeqVec>,
@@ -182,6 +189,8 @@ impl BloomFilter {
 
     ///generates random kmers, that are therefore likely not supposed to be here, and counts how
     ///many return as positive
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_false_positives(&self, k: u16, m: u16, l: u16,
         total_false_negs: usize,
         nb_sequence_false_negs: usize,
@@ -205,6 +214,8 @@ impl BloomFilter {
     }
 
     ///generates a random sequence before counting false positives in it
+    #[cfg(test)]
+    #[allow(dead_code)]
     fn make_n_check_sequence(&self, k: u16, m: u16, l: u16, avg_len: usize, decycler_set: &Decycler) -> usize {
         //generate random sequence
         let mut rng = rand::rng();
@@ -234,6 +245,8 @@ impl BloomFilter {
     ///for parallel operations, as only small checks at the end
     ///returns a vec of boolean with the i-th indexed boolean corresponding to if the i-th kmer
     ///returns a positive
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn check_sequence(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
         //protection against small sequences
         if original_sequence.len() < k as usize {
@@ -278,6 +291,8 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
+    #[cfg(test)]
+    #[allow(dead_code)]
     fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
 
         for i in 0..kmer.len()-s as usize +1 {
@@ -294,6 +309,8 @@ impl BloomFilter {
         true
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn check_sequence_u128(&self, original_sequence: PackedSeqVec, k: u16, m: u16, s: u16, decycler_set: &Decycler) -> Vec<bool> {
         //protection against small sequences
         if original_sequence.len() < k as usize {
@@ -338,6 +355,8 @@ impl BloomFilter {
     }
 
     ///checks if a kmer is present
+    #[cfg(test)]
+    #[allow(dead_code)]
     fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
 
         for i in 0..kmer.len()-s as usize+1 {

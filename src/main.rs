@@ -25,6 +25,8 @@ use needletail::parse_fastx_file;
 use rand::Rng;
 use std::time::{Duration, Instant};
 
+const INTRA_RECORD_CHUNK_KMERS: usize = 1 << 20;
+
 
 ///taking care of all the needed command line arguments, first the more open ones, and then the
 ///"expert" ones
@@ -237,49 +239,57 @@ pub fn main() {
         };
 
         chunked_lines.par_bridge().for_each(|chunk| {
-            let mut block_lines_counter: usize = 0;
-            let mut local_inserted_kmer_count: u64 = 0;
-            let mut local_kmer_sum_total: u64 = 0;
+            if only_parse {
+                let block_lines_counter: usize = chunk.iter().map(Vec::len).sum();
+                kmer_sum.fetch_add(block_lines_counter as u64, Ordering::Relaxed);
+                return;
+            }
 
-            //to reduce number of created and destroyed vectors throughout
-            let mut all_addresses: Vec<usize> = vec![0; 7*(2*k-m) as usize];
-
+            let mut sequence_chunks: Vec<Vec<u8>> = Vec::with_capacity(chunk.len());
             for line in chunk {
-                // /!\/!\ assuming single line writing, so that each line corresponds to a
-                // sequence
-                //with this assumption make a packedseq from the sequence
-                let sequence = PackedSeqVec::from_ascii(&line);
+                if line.len() < k as usize {
+                    continue;
+                }
 
-                //roll a dice to add to the false negatives checker
                 if counting {
                     let dice_roll = rand::rng().random_range(0..5000);
                     if dice_roll == 0 {
                         let mut false_negs = false_neg_list.lock().unwrap();
-                        false_negs.push(sequence.clone());
-                        drop(false_negs);
+                        false_negs.push(PackedSeqVec::from_ascii(&line));
                     }
                 }
 
-                if only_parse {
-                    block_lines_counter += sequence.len();
-                } else if sequence.len() >= k as usize {
-                    local_inserted_kmer_count += (sequence.len() + 1 - k as usize) as u64;
-                    let local_kmer_sum =
-                        handle_sequence(&bloom, sequence, k, m, nb_blocks,
-                        no_bloom, &mut all_addresses, &decycler_set, s);
+                sequence_chunks.extend(split_sequence_for_parallelism(
+                    line,
+                    k,
+                    INTRA_RECORD_CHUNK_KMERS,
+                ));
+            }
+
+            sequence_chunks.into_par_iter().for_each_init(
+                || vec![0; 7 * (2 * k - m) as usize],
+                |all_addresses, line| {
+                    let sequence = PackedSeqVec::from_ascii(&line);
+                    inserted_kmer_count.fetch_add(
+                        (sequence.len() + 1 - k as usize) as u64,
+                        Ordering::Relaxed,
+                    );
+                    let local_kmer_sum = handle_sequence(
+                        &bloom,
+                        sequence,
+                        k,
+                        m,
+                        nb_blocks,
+                        no_bloom,
+                        all_addresses,
+                        &decycler_set,
+                        s,
+                    );
                     if no_bloom {
-                        local_kmer_sum_total = local_kmer_sum_total.wrapping_add(local_kmer_sum);
+                        kmer_sum.fetch_add(local_kmer_sum, Ordering::Relaxed);
                     }
-                }
-
-            }
-            inserted_kmer_count.fetch_add(local_inserted_kmer_count, Ordering::Relaxed);
-            if no_bloom {
-                kmer_sum.fetch_add(local_kmer_sum_total, Ordering::Relaxed);
-            }
-            if only_parse {
-                kmer_sum.fetch_add(block_lines_counter as u64, Ordering::Relaxed);
-            }
+                },
+            );
         })
     }
     let indexing_duration = indexing_start.elapsed();
@@ -288,8 +298,8 @@ pub fn main() {
     let query_start = Instant::now();
     if args.query_file != "" {
         //this means that we do have to query
-        let query_counter: Mutex<usize> = Mutex::new(0);
-        let positive_query_counter: Mutex<usize> = Mutex::new(0);
+        let query_counter = AtomicU64::new(0);
+        let positive_query_counter = AtomicU64::new(0);
 
         let reader = parse_fastx_file(&args.query_file).expect("valid path/file");
 
@@ -299,31 +309,30 @@ pub fn main() {
         };
 
         chunked_lines.par_bridge().for_each(|chunk| {
-            let mut local_count: usize = 0;
-            let mut local_pos_count: usize = 0;
-            for line in chunk {
+            let sequence_chunks: Vec<Vec<u8>> = chunk
+                .into_iter()
+                .filter(|line| line.len() >= k as usize)
+                .flat_map(|line| split_sequence_for_parallelism(line, k, INTRA_RECORD_CHUNK_KMERS))
+                .collect();
+
+            sequence_chunks.into_par_iter().for_each(|line| {
                 let sequence = PackedSeqVec::from_ascii(&line);
-                let presence_vec: Vec<bool>;
-                if s<=31 {
-                    presence_vec = frozen_bloom.check_sequence(sequence, k, m, s, &decycler_set);
+                let presence_vec = if s <= 31 {
+                    frozen_bloom.check_sequence(sequence, k, m, s, &decycler_set)
                 } else {
-                    presence_vec = frozen_bloom.check_sequence_u128(sequence, k, m, s, &decycler_set);
-                }
-                local_count += presence_vec.len();
-                local_pos_count += sum_vec_bool(&presence_vec);
-            }
-            let mut q_count = query_counter.lock().unwrap();
-            let mut q_count_pos = positive_query_counter.lock().unwrap();
-            *q_count += local_count;
-            *q_count_pos += local_pos_count;
-            drop(q_count);
-            drop(q_count_pos);
-            queried_kmer_count.fetch_add(local_count as u64, Ordering::Relaxed);
+                    frozen_bloom.check_sequence_u128(sequence, k, m, s, &decycler_set)
+                };
+                let local_count = presence_vec.len() as u64;
+                let local_pos_count = sum_vec_bool(&presence_vec) as u64;
+                query_counter.fetch_add(local_count, Ordering::Relaxed);
+                positive_query_counter.fetch_add(local_pos_count, Ordering::Relaxed);
+                queried_kmer_count.fetch_add(local_count, Ordering::Relaxed);
+            });
         });
 
         if !auto_bench {
-            let q_count = query_counter.lock().unwrap();
-            let q_count_pos = positive_query_counter.lock().unwrap();
+            let q_count = query_counter.load(Ordering::Relaxed);
+            let q_count_pos = positive_query_counter.load(Ordering::Relaxed);
             println!("Number of kmer queried : {q_count}");
             println!("Number of positives : {q_count_pos}");
         }
@@ -402,6 +411,33 @@ fn resolve_input_path(input: Option<&str>, indexed_file: Option<&str>) -> String
         (None, None) => panic!("an input file path is required"),
         (Some(_), Some(_)) => panic!("use either the positional input or --indexed-file, not both"),
     }
+}
+
+fn split_sequence_for_parallelism(
+    sequence: Vec<u8>,
+    k: u16,
+    target_chunk_kmers: usize,
+) -> Vec<Vec<u8>> {
+    if sequence.len() < k as usize {
+        return vec![sequence];
+    }
+
+    let total_kmers = sequence.len() + 1 - k as usize;
+    if total_kmers <= target_chunk_kmers {
+        return vec![sequence];
+    }
+
+    let mut chunks = Vec::with_capacity((total_kmers + target_chunk_kmers - 1) / target_chunk_kmers);
+    let mut start_kmer = 0;
+    while start_kmer < total_kmers {
+        let end_kmer = usize::min(start_kmer + target_chunk_kmers, total_kmers);
+        let chunk_start = start_kmer;
+        let chunk_end = end_kmer + k as usize - 1;
+        chunks.push(sequence[chunk_start..chunk_end].to_vec());
+        start_kmer = end_kmer;
+    }
+
+    chunks
 }
 
 fn handle_sequence(
@@ -595,7 +631,8 @@ fn write_auto_bench_stdout(
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_sequence, handle_super_kmer, handle_super_kmer_u128, resolve_input_path, BloomFilter, Decycler,
+        handle_sequence, handle_super_kmer, handle_super_kmer_u128, resolve_input_path,
+        split_sequence_for_parallelism, BloomFilter, Decycler,
     };
     use packed_seq::{PackedSeqVec, SeqVec};
 
@@ -707,5 +744,30 @@ mod tests {
     #[should_panic(expected = "use either the positional input or --indexed-file, not both")]
     fn resolve_input_path_rejects_both_input_sources() {
         let _ = resolve_input_path(Some("reads.fa"), Some("indexed.fa"));
+    }
+
+    #[test]
+    fn split_sequence_for_parallelism_keeps_short_sequences_intact() {
+        let chunks = split_sequence_for_parallelism(b"ACGTAC".to_vec(), 7, 4);
+        assert_eq!(chunks, vec![b"ACGTAC".to_vec()]);
+    }
+
+    #[test]
+    fn split_sequence_for_parallelism_keeps_small_kmer_sets_intact() {
+        let chunks = split_sequence_for_parallelism(b"ACGTAC".to_vec(), 4, 3);
+        assert_eq!(chunks, vec![b"ACGTAC".to_vec()]);
+    }
+
+    #[test]
+    fn split_sequence_for_parallelism_splits_into_overlapping_kmer_ranges() {
+        let chunks = split_sequence_for_parallelism(b"ACGTACGTAC".to_vec(), 4, 3);
+        assert_eq!(
+            chunks,
+            vec![
+                b"ACGTAC".to_vec(),
+                b"TACGTA".to_vec(),
+                b"GTAC".to_vec(),
+            ]
+        );
     }
 }
