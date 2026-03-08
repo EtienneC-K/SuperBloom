@@ -11,7 +11,7 @@ pub mod super_bitvec;
 pub mod minimizers;
 
 use input::{Hell};
-use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
+use minimizers::{selected_mins_x_pos, MinimizerMode};
 use decyclers::{Decycler};
 use bloom::{BloomFilter, FrozenBloomFilter};
 use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
@@ -352,6 +352,14 @@ struct Args {
     #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
     no_simd_minimizer: bool,
 
+    /// enables the open-closed minimizer order from the open-closed minimizer paper
+    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    open_closed_minimizer: bool,
+
+    /// t-mer length used by open-closed minimizers; implies --open-closed-minimizer
+    #[arg(long)]
+    open_closed_t: Option<u16>,
+
 }
 
 pub fn main() {
@@ -375,6 +383,9 @@ pub fn main() {
     }
     if let Some(input_cardinality) = args.input_cardinality {
         assert!(input_cardinality > 0);
+    }
+    if let Some(t) = args.open_closed_t {
+        assert!(t > 0);
     }
 
     //number of threads allowed
@@ -403,6 +414,7 @@ pub fn main() {
     let only_parse: bool;
     let no_bloom: bool;
     let no_simd_minimizer: bool;
+    let minimizer_mode: MinimizerMode;
     let counting: bool;
     let auto_bench: bool;
 
@@ -438,6 +450,9 @@ pub fn main() {
     assert!(m < 32);
     assert!(m > 0);
     assert!(m <= k);
+    if let Some(t) = args.open_closed_t {
+        assert!(t <= m);
+    }
     match (requested_s, args.n_hashes) {
         (Some(resolved_s), Some(resolved_hashes)) => {
             s = resolved_s;
@@ -462,6 +477,15 @@ pub fn main() {
     only_parse = args.only_parse;
     no_bloom = args.no_bloom || args.only_parse;
     no_simd_minimizer = args.no_simd_minimizer;
+    minimizer_mode = if let Some(t) = args.open_closed_t {
+        MinimizerMode::OpenClosed { t }
+    } else if args.open_closed_minimizer {
+        MinimizerMode::OpenClosed { t: 5 }
+    } else if no_simd_minimizer {
+        MinimizerMode::Decycling
+    } else {
+        MinimizerMode::Simd
+    };
     counting = args.counting;
     auto_bench = args.auto_bench;
 
@@ -482,6 +506,13 @@ pub fn main() {
         println!("Parameters : ");
         println!("k : {k}, m: {m}, s : {s}, n_hashes : {n_hashes}");
         println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
+        match minimizer_mode {
+            MinimizerMode::Simd => println!("minimizer mode : simd"),
+            MinimizerMode::Decycling => println!("minimizer mode : decycling"),
+            MinimizerMode::OpenClosed { t } => {
+                println!("minimizer mode : open-closed (t = {t})");
+            }
+        }
     }
 
     //we create the needed data structures to store everything
@@ -491,7 +522,7 @@ pub fn main() {
     let duration_overhead_decycling: Duration;
     let mut decycler_set: Decycler;
     let debut = Instant::now();
-    if no_simd_minimizer {
+    if matches!(minimizer_mode, MinimizerMode::Decycling) {
         decycler_set = Decycler::new(m);
         decycler_set.compute_blocks();
     } else {
@@ -561,6 +592,7 @@ pub fn main() {
                         no_bloom,
                         all_addresses,
                         &decycler_set,
+                        minimizer_mode,
                         s,
                     );
                     if no_bloom {
@@ -596,9 +628,9 @@ pub fn main() {
             sequence_chunks.into_par_iter().for_each(|line| {
                 let sequence = PackedSeqVec::from_ascii(&line);
                 let presence_vec = if s <= 31 {
-                    frozen_bloom.check_sequence(sequence, k, m, s, &decycler_set)
+                    frozen_bloom.check_sequence(sequence, k, m, s, &decycler_set, minimizer_mode)
                 } else {
-                    frozen_bloom.check_sequence_u128(sequence, k, m, s, &decycler_set)
+                    frozen_bloom.check_sequence_u128(sequence, k, m, s, &decycler_set, minimizer_mode)
                 };
                 let local_count = presence_vec.len() as u64;
                 let local_pos_count = sum_vec_bool(&presence_vec) as u64;
@@ -619,7 +651,7 @@ pub fn main() {
 
     let (false_negative_rate, false_positive_rate) = if counting {
         let false_negs = false_neg_list.lock().unwrap().to_vec();
-        frozen_bloom.count_false_bloom(false_negs, k, m, s, &decycler_set)
+        frozen_bloom.count_false_bloom(false_negs, k, m, s, &decycler_set, minimizer_mode)
     } else {
         (0.0, 0.0)
     };
@@ -725,6 +757,7 @@ fn handle_sequence(
     no_bloom: bool,
     all_addresses: &mut Vec<usize>,
     decycler_set: &Decycler,
+    minimizer_mode: MinimizerMode,
     l: u16,
     ) -> u64 {
     if original_sequence.len() < k as usize {
@@ -732,16 +765,8 @@ fn handle_sequence(
     }
     let address_mask: usize = bloom.block_size-1;
     let mut local_kmer_sum: u64 = 0;
-    let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec);
-    if decycler_set.m > 1 {
-        //we use the decycler
-        (super_kmers_positions, minimizer_values, sequence) =
-            decycling_mins_x_pos(original_sequence, k, m, decycler_set);
-    } else {
-        //we use simd_minimizer
-        (super_kmers_positions, minimizer_values, sequence) =
-            minimizers_x_positions(original_sequence, k, m);
-    }
+    let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec) =
+        selected_mins_x_pos(original_sequence, k, m, decycler_set, minimizer_mode);
 
     //quick check that we don't have abherrent results
     assert!(super_kmers_positions.len()==minimizer_values.len(), 
@@ -910,7 +935,7 @@ mod tests {
         handle_super_kmer_u128, infer_block_size_bits, max_superkmer_address_capacity,
         optimal_hash_count, optimal_smer_length, default_smer_length, resolve_input_path,
         split_sequence_for_parallelism, BloomFilter, Decycler,
-        estimate_input_cardinality,
+        estimate_input_cardinality, MinimizerMode,
     };
     use packed_seq::{PackedSeqVec, SeqVec};
     use std::fs;
@@ -945,7 +970,18 @@ mod tests {
         let mut addresses = vec![0; 64];
 
         assert_eq!(
-            handle_sequence(&bloom, sequence, 5, 3, 1 << 10, false, &mut addresses, &decycler, 3),
+            handle_sequence(
+                &bloom,
+                sequence,
+                5,
+                3,
+                1 << 10,
+                false,
+                &mut addresses,
+                &decycler,
+                MinimizerMode::Decycling,
+                3,
+            ),
             0
         );
     }
@@ -957,7 +993,18 @@ mod tests {
         let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
         let mut addresses = vec![0; 64];
 
-        let sum = handle_sequence(&bloom, sequence, 5, 3, 1 << 10, true, &mut addresses, &decycler, 3);
+        let sum = handle_sequence(
+            &bloom,
+            sequence,
+            5,
+            3,
+            1 << 10,
+            true,
+            &mut addresses,
+            &decycler,
+            MinimizerMode::Decycling,
+            3,
+        );
         assert_ne!(sum, 0);
     }
 
@@ -968,8 +1015,19 @@ mod tests {
         let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
         let mut addresses = vec![0; 64];
 
-        let _ = handle_sequence(&bloom, sequence.clone(), 5, 3, 1 << 10, false, &mut addresses, &decycler, 3);
-        let results = bloom.check_sequence(sequence, 5, 3, 3, &decycler);
+        let _ = handle_sequence(
+            &bloom,
+            sequence.clone(),
+            5,
+            3,
+            1 << 10,
+            false,
+            &mut addresses,
+            &decycler,
+            MinimizerMode::Decycling,
+            3,
+        );
+        let results = bloom.check_sequence(sequence, 5, 3, 3, &decycler, MinimizerMode::Decycling);
 
         assert_eq!(results.len(), 4);
         assert!(results.iter().all(|present| *present));
@@ -984,8 +1042,20 @@ mod tests {
         );
         let mut addresses = vec![0; 256];
 
-        let _ = handle_sequence(&bloom, sequence.clone(), 40, 3, 1 << 10, false, &mut addresses, &decycler, 32);
-        let results = bloom.check_sequence_u128(sequence, 40, 3, 32, &decycler);
+        let _ = handle_sequence(
+            &bloom,
+            sequence.clone(),
+            40,
+            3,
+            1 << 10,
+            false,
+            &mut addresses,
+            &decycler,
+            MinimizerMode::Decycling,
+            32,
+        );
+        let results =
+            bloom.check_sequence_u128(sequence, 40, 3, 32, &decycler, MinimizerMode::Decycling);
 
         assert_eq!(results.len(), 9);
         assert!(results.iter().all(|present| *present));
