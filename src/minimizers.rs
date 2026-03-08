@@ -3,34 +3,49 @@
 
 use crate::decyclers;
 
+use std::cell::RefCell;
 use packed_seq::{PackedSeqVec, SeqVec, Seq, PackedSeq};
+use seq_hash::NtHasher;
 use simd_minimizers::{canonical_minimizers};
 use decyclers::{Decycler};
+
+#[derive(Default)]
+struct SimdMinimizerScratch {
+    minimizer_positions: Vec<u32>,
+}
+
+thread_local! {
+    static SIMD_MINIMIZER_SCRATCH: RefCell<SimdMinimizerScratch> =
+        RefCell::new(SimdMinimizerScratch::default());
+}
 
 ///function that does all the job we're looking for here, with given kmer and word lengths
 ///also converts the packedseqvec to a bitvec to easily slice it later on
 pub fn minimizers_x_positions(packed_seq: PackedSeqVec, k: u16, m: u16) 
         -> (Vec<u32>, Vec<u64>, PackedSeqVec) {
-    //variables that need to be initialized for the canonical minimizer to be computed
-    let mut minimizer_positions = Vec::new();
-    let mut super_kmers = Vec::new(); //those are actually positions, not the superkmers themselves
-    //ce que je veux c'est super_kmers et les canonical_minimizers en vrai
+    let max_windows = packed_seq.len().saturating_sub(k as usize) + 1;
+    let mut super_kmers = Vec::with_capacity(max_windows); //those are actually positions, not the superkmers themselves
     let window_size = k-m+1;
     let minimizer_length = m;
 
-    //hasher
-    let seed: u32 = 42;
-    let hasher = <seq_hash::NtHasher>::new_with_seed(minimizer_length.into(), seed); //static seed 42 for now
-    
-    //actual computation from the library
-    let minimizer_vals: Vec<u64> = canonical_minimizers(minimizer_length.into(), window_size.into())
-        .hasher(&hasher)
-        .super_kmers(&mut super_kmers)
-        .run(packed_seq.as_slice(), &mut minimizer_positions)
-        .values_u64()
-        .collect();
+    let minimizer_vals = SIMD_MINIMIZER_SCRATCH.with(|scratch| {
+        let mut scratch = scratch.borrow_mut();
+        scratch.minimizer_positions.clear();
+        let current_capacity = scratch.minimizer_positions.capacity();
+        scratch
+            .minimizer_positions
+            .reserve(max_windows.saturating_sub(current_capacity));
 
-    (super_kmers, minimizer_vals, packed_seq) //for when ill use the rolling part of rolling
+        let seed: u32 = 42;
+        let hasher = <NtHasher>::new_with_seed(minimizer_length.into(), seed);
+        let output = canonical_minimizers(minimizer_length.into(), window_size.into())
+            .hasher(&hasher)
+            .super_kmers(&mut super_kmers)
+            .run(packed_seq.as_slice(), &mut scratch.minimizer_positions);
+        output.values_u64().collect()
+    });
+
+    (super_kmers, minimizer_vals, packed_seq)
 }
 
 ///takes same input and returns same thing as minimizers_x_positions plus decycling sets slice, 
