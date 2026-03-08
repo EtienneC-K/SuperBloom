@@ -130,6 +130,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "itertools",
+ "libc",
  "needletail",
  "nthash",
  "packed-seq",

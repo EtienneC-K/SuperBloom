@@ -24,12 +24,109 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use needletail::parse_fastx_file;
 use rand::Rng;
 use std::time::{Duration, Instant};
+use libc::{RUSAGE_SELF, getrusage, rusage};
+use std::io::{self, Write};
 
 const INTRA_RECORD_CHUNK_KMERS: usize = 1 << 20;
+const BITS_PER_GIB: usize = 1 << 33;
+const HALF_FILL_LOG: f64 = std::f64::consts::LN_2;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PhaseStats {
+    wall_seconds: f64,
+    cpu_seconds: f64,
+}
+
+impl PhaseStats {
+    fn cpu_usage_percent(self) -> f64 {
+        if self.wall_seconds == 0.0 {
+            0.0
+        } else {
+            100.0 * self.cpu_seconds / self.wall_seconds
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PhaseTimer {
+    wall_start: Instant,
+    cpu_start_seconds: f64,
+}
+
+impl PhaseTimer {
+    fn start() -> Self {
+        Self {
+            wall_start: Instant::now(),
+            cpu_start_seconds: current_process_cpu_seconds(),
+        }
+    }
+
+    fn finish(self) -> PhaseStats {
+        PhaseStats {
+            wall_seconds: self.wall_start.elapsed().as_secs_f64(),
+            cpu_seconds: current_process_cpu_seconds() - self.cpu_start_seconds,
+        }
+    }
+}
+
+fn current_process_cpu_seconds() -> f64 {
+    unsafe {
+        let mut usage: rusage = std::mem::zeroed();
+        let status = getrusage(RUSAGE_SELF, &mut usage);
+        assert_eq!(status, 0, "getrusage failed");
+        timeval_to_seconds(usage.ru_utime) + timeval_to_seconds(usage.ru_stime)
+    }
+}
+
+fn timeval_to_seconds(value: libc::timeval) -> f64 {
+    value.tv_sec as f64 + value.tv_usec as f64 / 1_000_000.0
+}
+
+fn auto_size_bits_from_ram_gb(ram_gb: usize) -> usize {
+    ram_gb
+        .checked_mul(BITS_PER_GIB)
+        .expect("requested RAM budget is too large")
+}
+
+fn max_superkmer_kmers(k: u16, m: u16) -> usize {
+    k as usize - m as usize + 1
+}
+
+fn superkmer_smer_count(k: u16, m: u16, s: u16) -> usize {
+    max_superkmer_kmers(k, m) + k as usize - s as usize
+}
+
+fn max_superkmer_address_capacity(k: u16, m: u16, s: u16, n_hashes: usize) -> usize {
+    superkmer_smer_count(k, m, s) * n_hashes
+}
+
+fn optimal_hash_count(block_size: usize, k: u16, m: u16, s: u16) -> usize {
+    let smer_count = superkmer_smer_count(k, m, s) as f64;
+    ((block_size as f64 * HALF_FILL_LOG) / smer_count)
+        .round()
+        .max(1.0) as usize
+}
+
+fn optimal_smer_length(block_size: usize, k: u16, m: u16, n_hashes: usize) -> u16 {
+    let max_superkmer = max_superkmer_kmers(k, m) as f64;
+    let raw_s = k as f64 + max_superkmer - (block_size as f64 * HALF_FILL_LOG) / n_hashes as f64;
+    let max_supported_s = usize::min(k as usize, 61) as f64;
+    raw_s
+        .round()
+        .clamp(1.0, max_supported_s) as u16
+}
+
+fn default_smer_length(k: u16) -> u16 {
+    k.saturating_sub(10).max(1)
+}
+
+fn flush_stdout_and_exit(code: i32) -> ! {
+    io::stdout().flush().expect("stdout flush failed");
+    std::process::exit(code);
+}
 
 
-///taking care of all the needed command line arguments, first the more open ones, and then the
-///"expert" ones
+///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -50,7 +147,7 @@ struct Args {
 
     ///quality versus performance parameter, positive integer, usually between 1 and 3, a higher
     ///value will lead to less false positive but slower execution than higher values
-    #[arg(short, long, default_value_t = 2)]
+    #[arg(short, long, default_value_t = 4)]
     b: u16,
 
     ///max amount of RAM (integer in GB) to be used, must be at least 1
@@ -61,32 +158,25 @@ struct Args {
     #[arg(short, long, default_value_t = String::from("1"))]
     threads: String,
 
-    ///number of hashes for the bloom filter
-    #[arg(short, long, default_value_t = 3)]
-    n_hashes: usize,
+    ///number of hashes for the bloom filter; if omitted while s is set, it is chosen
+    ///automatically from block-size occupancy
+    #[arg(short, long)]
+    n_hashes: Option<usize>,
 
-    ///length of the s-mers, needs to be inferior or equal to k, if left at the default value 0
-    ///will be set to k-3
-    #[arg(short, long, default_value_t = 0)]
-    s: u16,
+    ///length of the s-mers, needs to be inferior or equal to k; if omitted while n_hashes is set,
+    ///it is chosen automatically from block-size occupancy
+    #[arg(short, long)]
+    s: Option<u16>,
 
-    ///enables the use of "expert" parameters, if this flag is down all the aftermentionned
-    ///parameters will
-    ///be chosen automatically, if it is up, you can specifiy the ones you want to fine tune
-    ///the bloom filters to your exact usage, does require you to know what you're doing to still
-    ///have good performances and results.
-    /// \n Will override the b and ram basic parameters
-    #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
-    exp: bool,
+    ///length of the minimizers for grouping the kmers, has to be inferior to k and inferior to 32
+    ///if omitted it is chosen automatically from the bloom geometry and b
+    #[arg(short, long)]
+    m: Option<u16>,
 
-    ///length of the minimizers for grouping the kmers, has to be inferior to k and inferior to 32,
-    #[arg(short, long, default_value_t = 11)]
-    m: u16,
-
-    ///size (in bits) of the bloom filter, expressed as a power of 2, overrides the max ram
-    ///parameter
-    #[arg(short, long, default_value_t = 33)]
-    size: usize,
+    ///size (in bits) of the bloom filter, expressed as a power of 2, overrides the ram
+    ///parameter when provided
+    #[arg(short, long)]
+    size: Option<usize>,
 
     ///size (in bits) of each of the bloom filters blocks, expressed as a power of 2
     #[arg(short, long, default_value_t = 13)]
@@ -129,18 +219,20 @@ pub fn main() {
     //checking the arguments do make some sense
     let args = Args::parse();
     assert!(args.ram >= 1);
-    assert!(args.k >= args.s); //cant have the s-mers be longer than the kmers
-    assert!(args.m < 32);
-    assert!(args.m > 0);
 
     //defining all variables constants that are based on the argument input
     let k: u16 = args.k;
-    let n_hashes: usize = args.n_hashes;
-    let s: u16 = if args.s > 0 {args.s} else {k-3};
-    assert!(s > 0);
-    assert!(s < 62);
+    let requested_s = args.s.filter(|&s| s > 0);
+    if let Some(s) = requested_s {
+        assert!(args.k >= s); //cant have the s-mers be longer than the kmers
+    }
+    if let Some(n_hashes) = args.n_hashes {
+        assert!(n_hashes > 0);
+    }
 
     let m: u16;
+    let n_hashes: usize;
+    let s: u16;
     let mut size: usize;
     let mut block_size: usize;
     let mut nb_blocks: usize;
@@ -151,46 +243,42 @@ pub fn main() {
     let counting: bool;
     let auto_bench: bool;
 
-    if !args.exp {
-        //thats for casual users
-        size = 1<<((args.ram as f64).log2().floor() as usize)+30;
-        block_size = 1<<13;
-        nb_blocks = size/block_size;
-        m = (nb_blocks as f64).log2() as u16/2 + args.b;
-        sequential_fallback = 100;
-        counting = false;
-        no_bloom = false;
-        only_parse = false;
-        auto_bench = false;
-        no_simd_minimizer = false;
-
-
-        //if some expert parameters specified but flag is down, warning
-        if args.m != 11
-        || args.size != 33
-        || args.block_size != 13
-        || args.sequential_fallback != sequential_fallback
-        || args.only_parse != only_parse
-        || args.no_bloom != no_bloom
-        || args.no_simd_minimizer != no_simd_minimizer
-        || args.counting != counting
-        || args.auto_bench != auto_bench {
-           print!("/!\\ WARNING : experts parameters where specified but the expert parameter ");
-           println!("flag is down, are you sure of what you are doing ? Check --help if necessary."); 
+    size = match args.size {
+        Some(size_exponent) => 1 << size_exponent,
+        None => auto_size_bits_from_ram_gb(args.ram),
+    };
+    block_size = 1 << args.block_size;
+    nb_blocks = size / block_size;
+    m = args.m.unwrap_or_else(|| (nb_blocks as f64).log2() as u16 / 2 + args.b);
+    assert!(m < 32);
+    assert!(m > 0);
+    assert!(m <= k);
+    match (requested_s, args.n_hashes) {
+        (Some(resolved_s), Some(resolved_hashes)) => {
+            s = resolved_s;
+            n_hashes = resolved_hashes;
         }
-    } else {
-        //thats only for the experts
-        m = args.m;
-        size = 1<<args.size;
-        block_size = 1<<args.block_size;
-        nb_blocks = size/block_size;
-        sequential_fallback = args.sequential_fallback;
-        only_parse = args.only_parse;
-        no_bloom= args.no_bloom || args.only_parse;
-        no_simd_minimizer = args.no_simd_minimizer;
-        counting = args.counting;
-        auto_bench = args.auto_bench;
+        (Some(resolved_s), None) => {
+            s = resolved_s;
+            n_hashes = optimal_hash_count(block_size, k, m, s);
+        }
+        (None, Some(resolved_hashes)) => {
+            n_hashes = resolved_hashes;
+            s = optimal_smer_length(block_size, k, m, n_hashes);
+        }
+        (None, None) => {
+            s = default_smer_length(k);
+            n_hashes = optimal_hash_count(block_size, k, m, s);
+        }
     }
+    assert!(s > 0);
+    assert!(s < 62);
+    sequential_fallback = args.sequential_fallback;
+    only_parse = args.only_parse;
+    no_bloom = args.no_bloom || args.only_parse;
+    no_simd_minimizer = args.no_simd_minimizer;
+    counting = args.counting;
+    auto_bench = args.auto_bench;
 
 
     if no_bloom {
@@ -229,7 +317,7 @@ pub fn main() {
     //used to check for false negative rate at the end
     let false_neg_list: Mutex<Vec<PackedSeqVec>> = Mutex::new(Vec::new());
 
-    let indexing_start = Instant::now();
+    let indexing_timer = PhaseTimer::start();
     {
         let reader = parse_fastx_file(&filename).expect("valid path/file");
 
@@ -267,7 +355,7 @@ pub fn main() {
             }
 
             sequence_chunks.into_par_iter().for_each_init(
-                || vec![0; 7 * (2 * k - m) as usize],
+                || vec![0; max_superkmer_address_capacity(k, m, s, n_hashes)],
                 |all_addresses, line| {
                     let sequence = PackedSeqVec::from_ascii(&line);
                     inserted_kmer_count.fetch_add(
@@ -292,10 +380,10 @@ pub fn main() {
             );
         })
     }
-    let indexing_duration = indexing_start.elapsed();
+    let indexing_stats = indexing_timer.finish();
     let frozen_bloom = bloom.into_frozen();
 
-    let query_start = Instant::now();
+    let query_timer = PhaseTimer::start();
     if args.query_file != "" {
         //this means that we do have to query
         let query_counter = AtomicU64::new(0);
@@ -337,7 +425,7 @@ pub fn main() {
             println!("Number of positives : {q_count_pos}");
         }
     }
-    let query_duration = query_start.elapsed();
+    let query_stats = query_timer.finish();
 
     let (false_negative_rate, false_positive_rate) = if counting {
         let false_negs = false_neg_list.lock().unwrap().to_vec();
@@ -361,8 +449,12 @@ pub fn main() {
         } else {
             println!("ns per queried kmer : N/A");
         }
-        println!("total indexing time (s) : {}", indexing_duration.as_secs_f64());
-        println!("total query time (s) : {}", query_duration.as_secs_f64());
+        println!("total indexing time (s) : {}", indexing_stats.wall_seconds);
+        println!("index cpu time (s) : {}", indexing_stats.cpu_seconds);
+        println!("index cpu usage (%) : {}", indexing_stats.cpu_usage_percent());
+        println!("total query time (s) : {}", query_stats.wall_seconds);
+        println!("query cpu time (s) : {}", query_stats.cpu_seconds);
+        println!("query cpu usage (%) : {}", query_stats.cpu_usage_percent());
     }
     
     //to prevent optims
@@ -380,7 +472,7 @@ pub fn main() {
     }
     else {
         println!("Parameters : ");
-        println!("k : {k}, m: {m}");
+        println!("k : {k}, m: {m}, s : {s}, n_hashes : {n_hashes}");
         println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
 
         if counting {
@@ -402,6 +494,7 @@ pub fn main() {
             }
         }
     }
+    flush_stdout_and_exit(0);
 }
 
 fn resolve_input_path(input: Option<&str>, indexed_file: Option<&str>) -> String {
@@ -526,6 +619,11 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     k: u16, hashed_minimizer: u64, 
     mut kmer_number: usize, all_addresses: &mut Vec<usize>, 
     address_mask: usize, l: u16) -> usize {
+    let smer_count = end_pos as usize + (k - l) as usize - start_pos as usize;
+    let required_addresses = smer_count * bloom.n_hashes;
+    if all_addresses.len() < required_addresses {
+        all_addresses.resize(required_addresses, 0);
+    }
     let mut last_relevant_index: usize = 0;
     for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize{
         let smer: PackedSeq = sequence.slice(j..j+l as usize);
@@ -627,7 +725,9 @@ fn write_auto_bench_stdout(
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_sequence, handle_super_kmer, handle_super_kmer_u128, resolve_input_path,
+        PhaseStats, auto_size_bits_from_ram_gb, handle_sequence, handle_super_kmer,
+        handle_super_kmer_u128, max_superkmer_address_capacity, optimal_hash_count,
+        optimal_smer_length, default_smer_length, resolve_input_path,
         split_sequence_for_parallelism, BloomFilter, Decycler,
     };
     use packed_seq::{PackedSeqVec, SeqVec};
@@ -765,5 +865,60 @@ mod tests {
                 b"GTAC".to_vec(),
             ]
         );
+    }
+
+    #[test]
+    fn phase_stats_cpu_usage_percent_handles_zero_wall_time() {
+        let stats = PhaseStats {
+            wall_seconds: 0.0,
+            cpu_seconds: 12.0,
+        };
+
+        assert_eq!(stats.cpu_usage_percent(), 0.0);
+    }
+
+    #[test]
+    fn phase_stats_cpu_usage_percent_scales_cpu_time() {
+        let stats = PhaseStats {
+            wall_seconds: 2.0,
+            cpu_seconds: 6.0,
+        };
+
+        assert_eq!(stats.cpu_usage_percent(), 300.0);
+    }
+
+    #[test]
+    fn auto_size_bits_from_ram_gb_maps_one_gib_correctly() {
+        assert_eq!(auto_size_bits_from_ram_gb(1), 1 << 33);
+    }
+
+    #[test]
+    fn auto_size_bits_from_ram_gb_maps_thirty_two_gib_correctly() {
+        assert_eq!(auto_size_bits_from_ram_gb(32), 1 << 38);
+    }
+
+    #[test]
+    fn optimal_hash_count_matches_half_fill_formula() {
+        assert_eq!(optimal_hash_count(1 << 13, 31, 13, 28), 258);
+    }
+
+    #[test]
+    fn optimal_smer_length_inverts_hash_count_formula() {
+        assert_eq!(optimal_smer_length(1 << 13, 31, 13, 258), 28);
+    }
+
+    #[test]
+    fn default_smer_length_is_k_minus_ten() {
+        assert_eq!(default_smer_length(31), 21);
+    }
+
+    #[test]
+    fn default_smer_length_clamps_to_one() {
+        assert_eq!(default_smer_length(5), 1);
+    }
+
+    #[test]
+    fn max_superkmer_address_capacity_matches_smer_count_times_hashes() {
+        assert_eq!(max_superkmer_address_capacity(31, 24, 21, 315), 5670);
     }
 }
