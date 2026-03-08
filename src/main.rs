@@ -14,7 +14,7 @@ use input::{Hell};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
 use bloom::{BloomFilter, FrozenBloomFilter};
-use utils::{xorshift_u64, xorshift_u128, sum_vec_bool};
+use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
 use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
 use std::env; //for backtrace
 use rayon::prelude::*;
@@ -559,35 +559,31 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
 fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     bloom: &BloomFilter, 
     k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, all_addresses: &mut Vec<usize>, 
+    mut kmer_number: usize, _all_addresses: &mut Vec<usize>, 
     address_mask: usize, l: u16) -> usize {
-    let mut last_relevant_index: usize = 0;
-    for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize {
-        let smer: PackedSeq = sequence.slice(j..j+l as usize);
-        let mut hash: u128 = xorshift_u128(smer.as_u128());
-
-
-        for _i in 0..bloom.n_hashes {
-            let address = hash as usize & address_mask;
-            all_addresses[last_relevant_index] = address;
-            last_relevant_index += 1;
-            hash = xorshift_u128(hash);
-        }
-
-        kmer_number+=1;
-
-    }
-    let relevant_addresses = &mut all_addresses[..last_relevant_index];
+    let smer_count = end_pos as usize + (k - l) as usize - start_pos as usize;
     let blocknum: usize = (hashed_minimizer as usize)&1023;
     let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
     let subblock = &mut block[subblocknum];
-    for address in relevant_addresses {
-            if !subblock.get(*address) {
-                subblock.set(*address, true);
+
+    let mut current_smer = sequence.slice(start_pos as usize..start_pos as usize + l as usize).as_u128();
+    for offset in 0..smer_count {
+        let mut hash = hash_u128_to_u64(current_smer);
+        for _ in 0..bloom.n_hashes {
+            let address = hash as usize & address_mask;
+            if !subblock.get(address) {
+                subblock.set(address, true);
             }
+            hash = xorshift_u64(hash);
+        }
+
+        kmer_number += 1;
+        if offset + 1 < smer_count {
+            let next_base = sequence.as_slice().get(start_pos as usize + offset + l as usize);
+            current_smer = roll_u128_kmer(current_smer, next_base, l);
+        }
     }
-    drop(block);
     kmer_number
 }
 

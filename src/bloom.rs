@@ -13,7 +13,7 @@ use rayon::iter::ParallelIterator;
 use rayon::prelude::{IntoParallelRefIterator, ParallelSliceMut};
 use packed_seq::{PackedSeqVec, SeqVec, PackedSeq, Seq};
 use decyclers::Decycler;
-use utils::{xorshift_u64, xorshift_u128, sum_vec_bool};
+use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use rand::prelude::*;
 
@@ -361,13 +361,13 @@ impl BloomFilter {
 
         for i in 0..kmer.len()-s as usize+1 {
             let smer = kmer.slice(i..i+s as usize);
-            let mut hash = xorshift_u128(smer.as_u128());
+            let mut hash = hash_u128_to_u64(smer.as_u128());
             for _j in 0..self.n_hashes {
-                let address = hash as usize&self.block_size_mask;
+                let address = hash as usize & self.block_size_mask;
                 if !subblock.get(address) {
                     return false
                 }
-                hash = xorshift_u128(hash);
+                hash = xorshift_u64(hash);
             }
         }
         true
@@ -574,30 +574,81 @@ impl FrozenBloomFilter {
             let blocknum: usize = (hashed_minimizer as usize)%1024;
             let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
             let subblock = &self.filter[blocknum][subblocknum];
-
-            for j in start_pos..end_pos {
-                let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer_u128(subblock, kmer, s);
-                presence_vec.push(present);
-            }
+            check_super_kmer_u128(
+                subblock,
+                &sequence,
+                start_pos,
+                end_pos,
+                k,
+                s,
+                self.n_hashes,
+                self.block_size_mask,
+                &mut presence_vec,
+            );
         }
         presence_vec
     }
 
-    fn check_kmer_u128(&self, subblock: &SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
-        for i in 0..kmer.len()-s as usize+1 {
-            let smer = kmer.slice(i..i+s as usize);
-            let mut hash = xorshift_u128(smer.as_u128());
-            for _j in 0..self.n_hashes {
-                let address = hash as usize&self.block_size_mask;
-                if !subblock.get(address) {
-                    return false
-                }
-                hash = xorshift_u128(hash);
-            }
+}
+
+fn check_super_kmer_u128(
+    subblock: &SuperBitVec,
+    sequence: &PackedSeqVec,
+    start_pos: usize,
+    end_pos: usize,
+    k: u16,
+    s: u16,
+    n_hashes: usize,
+    block_size_mask: usize,
+    presence_vec: &mut Vec<bool>,
+) {
+    let window_size = (k - s + 1) as usize;
+    let smer_count = end_pos + window_size - 1 - start_pos;
+    let mut current_smer = sequence.slice(start_pos..start_pos + s as usize).as_u128();
+    let mut rolling_presence = vec![true; window_size];
+    let mut missing_in_window = 0usize;
+
+    for offset in 0..smer_count {
+        if offset >= window_size && !rolling_presence[offset % window_size] {
+            missing_in_window -= 1;
         }
-        true
+
+        let smer_present = check_smer_hash_u128(
+            subblock,
+            current_smer,
+            n_hashes,
+            block_size_mask,
+        );
+        rolling_presence[offset % window_size] = smer_present;
+        if !smer_present {
+            missing_in_window += 1;
+        }
+        if offset + 1 >= window_size {
+            presence_vec.push(missing_in_window == 0);
+        }
+        if offset + 1 < smer_count {
+            let next_base = sequence.as_slice().get(start_pos + offset + s as usize);
+            current_smer = roll_u128_kmer(current_smer, next_base, s);
+        }
     }
+}
+
+#[inline(always)]
+fn check_smer_hash_u128(
+    subblock: &SuperBitVec,
+    packed_smer: u128,
+    n_hashes: usize,
+    block_size_mask: usize,
+) -> bool {
+    let mut hash = hash_u128_to_u64(packed_smer);
+    for _ in 0..n_hashes {
+        let address = hash as usize & block_size_mask;
+        if !subblock.get(address) {
+            return false;
+        }
+        hash = xorshift_u64(hash);
+    }
+    true
 }
 
 
@@ -656,13 +707,13 @@ mod tests {
                             hash = xorshift_u64(hash);
                         }
                     } else {
-                        let mut hash = crate::utils::xorshift_u128(smer.as_u128());
+                        let mut hash = crate::utils::hash_u128_to_u64(smer.as_u128());
                         for _ in 0..bloom.n_hashes {
                             let address = hash as usize & address_mask;
                             if !subblock.get(address) {
                                 subblock.set(address, true);
                             }
-                            hash = crate::utils::xorshift_u128(hash);
+                            hash = crate::utils::xorshift_u64(hash);
                         }
                     }
                 }
