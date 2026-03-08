@@ -1,11 +1,9 @@
-use crate::super_bitvec;
 use crate::minimizers;
 use crate::decyclers;
 use crate::utils;
 
 use seq_hash::NtHasher;
 use bit_vec::BitVec;
-use super_bitvec::SuperBitVec;
 use std::sync::Mutex;
 #[cfg(test)]
 use rayon::iter::ParallelBridge;
@@ -17,8 +15,72 @@ use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
 use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use rand::prelude::*;
 
+const SHARD_COUNT: usize = 1024;
+
+pub struct BlockShard {
+    words: Vec<u64>,
+    subblock_count: usize,
+    words_per_subblock: usize,
+    block_size: usize,
+}
+
+impl BlockShard {
+    pub fn new(subblock_count: usize, block_size: usize) -> Self {
+        let words_per_subblock = block_size.div_ceil(64);
+        Self {
+            words: vec![0; subblock_count * words_per_subblock],
+            subblock_count,
+            words_per_subblock,
+            block_size,
+        }
+    }
+
+    #[inline(always)]
+    fn word_index(&self, subblock: usize, address: usize) -> usize {
+        debug_assert!(subblock < self.subblock_count);
+        debug_assert!(address < self.block_size);
+        subblock * self.words_per_subblock + (address >> 6)
+    }
+
+    #[inline(always)]
+    pub fn get(&self, subblock: usize, address: usize) -> bool {
+        let word = self.words[self.word_index(subblock, address)];
+        ((word >> (63 - (address & 63))) & 1) == 1
+    }
+
+    #[inline(always)]
+    pub fn set(&mut self, subblock: usize, address: usize, value: bool) {
+        let word_index = self.word_index(subblock, address);
+        let mask = 1_u64 << (63 - (address & 63));
+        if value {
+            self.words[word_index] |= mask;
+        } else {
+            self.words[word_index] &= !mask;
+        }
+    }
+
+    pub fn count_set_bits(&self, subblock: usize) -> usize {
+        let start = subblock * self.words_per_subblock;
+        let end = start + self.words_per_subblock;
+        let mut count: usize = self.words[start..end]
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum();
+        let trailing_bits = (self.words_per_subblock * 64).saturating_sub(self.block_size);
+        if trailing_bits > 0 {
+            let padding_mask = (1_u64 << trailing_bits) - 1;
+            count -= (self.words[end - 1] & padding_mask).count_ones() as usize;
+        }
+        count
+    }
+
+    pub fn subblock_count(&self) -> usize {
+        self.subblock_count
+    }
+}
+
 pub struct BloomFilter {
-    pub filter: Vec<Mutex<Vec<SuperBitVec>>>,
+    pub filter: Vec<Mutex<BlockShard>>,
     pub block_size: usize,
     pub nb_blocks: usize,
     pub n_hashes: usize,
@@ -26,7 +88,7 @@ pub struct BloomFilter {
 }
 
 pub struct FrozenBloomFilter {
-    pub filter: Vec<Vec<SuperBitVec>>,
+    pub filter: Vec<BlockShard>,
     pub block_size: usize,
     pub nb_blocks: usize,
     pub n_hashes: usize,
@@ -37,13 +99,14 @@ impl BloomFilter {
     pub fn new_with_seed(size: usize, n_hashes: usize, _seed: u32, _k: usize, block_size: usize, 
         nb_blocks: usize) -> Self {
 
-        let magic_mutex_amount = 1024;
-        assert!(magic_mutex_amount*block_size <= size);
-        assert!(nb_blocks >= magic_mutex_amount);
-        let mut filter: Vec<Mutex<Vec<SuperBitVec>>> = Vec::new();
-        for _ in 0..magic_mutex_amount {
-            filter.push(Mutex::new(vec![SuperBitVec::new(block_size);
-                                        size/(block_size*magic_mutex_amount)]));
+        assert!(SHARD_COUNT * block_size <= size);
+        assert!(nb_blocks >= SHARD_COUNT);
+        assert_eq!(size, block_size * nb_blocks);
+        assert_eq!(nb_blocks % SHARD_COUNT, 0);
+        let subblocks_per_shard = nb_blocks / SHARD_COUNT;
+        let mut filter: Vec<Mutex<BlockShard>> = Vec::with_capacity(SHARD_COUNT);
+        for _ in 0..SHARD_COUNT {
+            filter.push(Mutex::new(BlockShard::new(subblocks_per_shard, block_size)));
         }
         Self {
             filter: filter,
@@ -63,7 +126,7 @@ impl BloomFilter {
         let filter = self
             .filter
             .into_iter()
-            .map(|block| block.into_inner().unwrap())
+            .map(|shard| shard.into_inner().unwrap())
             .collect();
         FrozenBloomFilter {
             filter,
@@ -101,14 +164,9 @@ impl BloomFilter {
         let total_counter: Mutex<usize> = Mutex::new(0);
         let filled_counter: Mutex<usize> = Mutex::new(0);
         let _ = &self.filter.iter().par_bridge().for_each(|block| {
-            let unlocked_block = block.lock().unwrap(); //its a Vec<BitVec>
-            for bit_vector in unlocked_block.iter() {
-                let mut counter: usize = 0;
-                for i in 0..bit_vector.len() {
-                    if bit_vector.get(i) {
-                        counter += 1;
-                    }
-                }
+            let unlocked_block = block.lock().unwrap();
+            for subblock in 0..unlocked_block.subblock_count() {
+                let counter = unlocked_block.count_set_bits(subblock);
                 if counter > 0 {
                     let mut el_liste = counts_list.lock().unwrap();
                     el_liste.push(counter);
@@ -275,14 +333,13 @@ impl BloomFilter {
             let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize} 
                                     else {super_kmers_positions[i+1] as usize};
             //must compute the subblock by ourselves, its not furnished this time around
-            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            let blocknum: usize = (hashed_minimizer as usize)%SHARD_COUNT;
             let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
-            let mut block = self.filter[blocknum].lock().unwrap();
-            let subblock = &mut block[subblocknum];
+            let block = self.filter[blocknum].lock().unwrap();
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer(subblock, kmer, s);
+                let present: bool = self.check_kmer(&block, subblocknum, kmer, s);
                 presence_vec.push(present);
             }
             drop(block);
@@ -293,14 +350,14 @@ impl BloomFilter {
     ///checks if a kmer is present
     #[cfg(test)]
     #[allow(dead_code)]
-    fn check_kmer(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
+    fn check_kmer(&self, block: &BlockShard, subblock: usize, kmer: PackedSeq, s: u16) -> bool {
 
         for i in 0..kmer.len()-s as usize +1 {
             let smer = kmer.slice(i..i+s as usize);
             let mut hash = xorshift_u64(smer.as_u64());
             for _j in 0..self.n_hashes {
                 let address = hash as usize&self.block_size_mask;
-                if !subblock.get(address) {
+                if !block.get(subblock, address) {
                     return false
                 }
                 hash = xorshift_u64(hash);
@@ -339,14 +396,13 @@ impl BloomFilter {
             let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize} 
                                     else {super_kmers_positions[i+1] as usize};
             //must compute the subblock by ourselves, its not furnished this time around
-            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            let blocknum: usize = (hashed_minimizer as usize)%SHARD_COUNT;
             let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
-            let mut block = self.filter[blocknum].lock().unwrap();
-            let subblock = &mut block[subblocknum];
+            let block = self.filter[blocknum].lock().unwrap();
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer_u128(subblock, kmer, s);
+                let present: bool = self.check_kmer_u128(&block, subblocknum, kmer, s);
                 presence_vec.push(present);
             }
             drop(block);
@@ -357,14 +413,14 @@ impl BloomFilter {
     ///checks if a kmer is present
     #[cfg(test)]
     #[allow(dead_code)]
-    fn check_kmer_u128(&self, subblock: &mut SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
+    fn check_kmer_u128(&self, block: &BlockShard, subblock: usize, kmer: PackedSeq, s: u16) -> bool {
 
         for i in 0..kmer.len()-s as usize+1 {
             let smer = kmer.slice(i..i+s as usize);
             let mut hash = hash_u128_to_u64(smer.as_u128());
             for _j in 0..self.n_hashes {
                 let address = hash as usize & self.block_size_mask;
-                if !subblock.get(address) {
+                if !block.get(subblock, address) {
                     return false
                 }
                 hash = xorshift_u64(hash);
@@ -385,13 +441,8 @@ impl FrozenBloomFilter {
         let total_counter: Mutex<usize> = Mutex::new(0);
         let filled_counter: Mutex<usize> = Mutex::new(0);
         let _ = &self.filter.par_iter().for_each(|block| {
-            for bit_vector in block {
-                let mut counter: usize = 0;
-                for i in 0..bit_vector.len() {
-                    if bit_vector.get(i) {
-                        counter += 1;
-                    }
-                }
+            for subblock in 0..block.subblock_count() {
+                let counter = block.count_set_bits(subblock);
                 if counter > 0 {
                     let mut el_liste = counts_list.lock().unwrap();
                     el_liste.push(counter);
@@ -521,26 +572,26 @@ impl FrozenBloomFilter {
             let start_pos: usize = super_kmers_positions[i] as usize;
             let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize}
                                     else {super_kmers_positions[i+1] as usize};
-            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            let blocknum: usize = (hashed_minimizer as usize)%SHARD_COUNT;
             let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
-            let subblock = &self.filter[blocknum][subblocknum];
+            let block = &self.filter[blocknum];
 
             for j in start_pos..end_pos {
                 let kmer: PackedSeq = sequence.slice(j..j+k as usize);
-                let present: bool = self.check_kmer(subblock, kmer, s);
+                let present: bool = self.check_kmer(block, subblocknum, kmer, s);
                 presence_vec.push(present);
             }
         }
         presence_vec
     }
 
-    fn check_kmer(&self, subblock: &SuperBitVec, kmer: PackedSeq, s: u16) -> bool {
+    fn check_kmer(&self, block: &BlockShard, subblock: usize, kmer: PackedSeq, s: u16) -> bool {
         for i in 0..kmer.len()-s as usize +1 {
             let smer = kmer.slice(i..i+s as usize);
             let mut hash = xorshift_u64(smer.as_u64());
             for _j in 0..self.n_hashes {
                 let address = hash as usize&self.block_size_mask;
-                if !subblock.get(address) {
+                if !block.get(subblock, address) {
                     return false
                 }
                 hash = xorshift_u64(hash);
@@ -571,11 +622,12 @@ impl FrozenBloomFilter {
             let start_pos: usize = super_kmers_positions[i] as usize;
             let end_pos: usize = if i==super_kmers_positions.len()-1 {sequence.len()+1-k as usize}
                                     else {super_kmers_positions[i+1] as usize};
-            let blocknum: usize = (hashed_minimizer as usize)%1024;
+            let blocknum: usize = (hashed_minimizer as usize)%SHARD_COUNT;
             let subblocknum: usize = ((hashed_minimizer as usize)>>10)&address_mask;
-            let subblock = &self.filter[blocknum][subblocknum];
+            let block = &self.filter[blocknum];
             check_super_kmer_u128(
-                subblock,
+                block,
+                subblocknum,
                 &sequence,
                 start_pos,
                 end_pos,
@@ -592,7 +644,8 @@ impl FrozenBloomFilter {
 }
 
 fn check_super_kmer_u128(
-    subblock: &SuperBitVec,
+    block: &BlockShard,
+    subblock: usize,
     sequence: &PackedSeqVec,
     start_pos: usize,
     end_pos: usize,
@@ -614,6 +667,7 @@ fn check_super_kmer_u128(
         }
 
         let smer_present = check_smer_hash_u128(
+            block,
             subblock,
             current_smer,
             n_hashes,
@@ -635,7 +689,8 @@ fn check_super_kmer_u128(
 
 #[inline(always)]
 fn check_smer_hash_u128(
-    subblock: &SuperBitVec,
+    block: &BlockShard,
+    subblock: usize,
     packed_smer: u128,
     n_hashes: usize,
     block_size_mask: usize,
@@ -643,7 +698,7 @@ fn check_smer_hash_u128(
     let mut hash = hash_u128_to_u64(packed_smer);
     for _ in 0..n_hashes {
         let address = hash as usize & block_size_mask;
-        if !subblock.get(address) {
+        if !block.get(subblock, address) {
             return false;
         }
         hash = xorshift_u64(hash);
@@ -661,9 +716,8 @@ fn _init_hasher(seed: u32, k: usize) -> NtHasher {
 
 #[cfg(test)]
 mod tests {
-    use super::BloomFilter;
+    use super::{BlockShard, BloomFilter};
     use crate::decyclers::Decycler;
-    use crate::super_bitvec::SuperBitVec;
     use crate::utils::xorshift_u64;
     use packed_seq::{PackedSeqVec, Seq, SeqVec};
 
@@ -691,7 +745,6 @@ mod tests {
             let blocknum = (hashed_minimizer as usize) & 1023;
             let subblocknum = ((hashed_minimizer as usize) >> 10) & ((bloom.nb_blocks >> 10) - 1);
             let mut block = bloom.filter[blocknum].lock().unwrap();
-            let subblock = &mut block[subblocknum];
 
             for j in start..end {
                 let kmer = packed.slice(j..j + k as usize);
@@ -701,8 +754,8 @@ mod tests {
                         let mut hash = xorshift_u64(smer.as_u64());
                         for _ in 0..bloom.n_hashes {
                             let address = hash as usize & address_mask;
-                            if !subblock.get(address) {
-                                subblock.set(address, true);
+                            if !block.get(subblocknum, address) {
+                                block.set(subblocknum, address, true);
                             }
                             hash = xorshift_u64(hash);
                         }
@@ -710,8 +763,8 @@ mod tests {
                         let mut hash = crate::utils::hash_u128_to_u64(smer.as_u128());
                         for _ in 0..bloom.n_hashes {
                             let address = hash as usize & address_mask;
-                            if !subblock.get(address) {
-                                subblock.set(address, true);
+                            if !block.get(subblocknum, address) {
+                                block.set(subblocknum, address, true);
                             }
                             hash = crate::utils::xorshift_u64(hash);
                         }
@@ -807,21 +860,21 @@ mod tests {
     #[test]
     fn check_kmer_returns_false_on_empty_subblock() {
         let bloom = BloomFilter::new(1 << 20, 3, 5, 1 << 10, 1 << 10);
-        let mut subblock = SuperBitVec::new(1 << 10);
+        let subblock = BlockShard::new(1, 1 << 10);
         let kmer = PackedSeqVec::from_ascii(b"ACGTA");
 
-        assert!(!bloom.check_kmer(&mut subblock, kmer.as_slice(), 3));
+        assert!(!bloom.check_kmer(&subblock, 0, kmer.as_slice(), 3));
     }
 
     #[test]
     fn check_kmer_u128_returns_false_on_empty_subblock() {
         let bloom = BloomFilter::new(1 << 20, 3, 40, 1 << 10, 1 << 10);
-        let mut subblock = SuperBitVec::new(1 << 10);
+        let subblock = BlockShard::new(1, 1 << 10);
         let kmer = PackedSeqVec::from_ascii(
             b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
         );
 
-        assert!(!bloom.check_kmer_u128(&mut subblock, kmer.as_slice(), 32));
+        assert!(!bloom.check_kmer_u128(&subblock, 0, kmer.as_slice(), 32));
     }
 
     #[test]

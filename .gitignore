@@ -5,3 +5,5 @@ bencher.py
 /results
 bench_results.csv
 *.csv
+__pycache__/
+*.pyc

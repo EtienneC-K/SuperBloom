@@ -15,7 +15,7 @@ use minimizers::{decycling_mins_x_pos, minimizers_x_positions};
 use decyclers::{Decycler};
 use bloom::{BloomFilter, FrozenBloomFilter};
 use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
-use packed_seq::{Seq, PackedSeqVec, SeqVec, PackedSeq};
+use packed_seq::{ChunkIt, PackedNSeqVec, PackedSeq, PackedSeqVec, PaddedIt, Seq, SeqVec, u32x8};
 use std::env; //for backtrace
 use rayon::prelude::*;
 use clap::Parser;
@@ -26,10 +26,13 @@ use rand::Rng;
 use std::time::{Duration, Instant};
 use libc::{RUSAGE_SELF, getrusage, rusage};
 use std::io::{self, Write};
+use seq_hash::{KmerHasher, NtHasher};
 
 const INTRA_RECORD_CHUNK_KMERS: usize = 1 << 20;
 const BITS_PER_GIB: usize = 1 << 33;
 const HALF_FILL_LOG: f64 = std::f64::consts::LN_2;
+const CARDINALITY_SKETCH_SIZE: usize = 1 << 13;
+const HASH_SPACE_SIZE: f64 = (u32::MAX as f64) + 1.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct PhaseStats {
@@ -65,6 +68,65 @@ impl PhaseTimer {
         PhaseStats {
             wall_seconds: self.wall_start.elapsed().as_secs_f64(),
             cpu_seconds: current_process_cpu_seconds() - self.cpu_start_seconds,
+        }
+    }
+}
+
+struct BottomSketchEstimator {
+    values: Vec<u32>,
+    sample_size: usize,
+    bound: u32,
+}
+
+impl BottomSketchEstimator {
+    fn new(sample_size: usize) -> Self {
+        assert!(sample_size > 0);
+        Self {
+            values: Vec::with_capacity(sample_size * 2),
+            sample_size,
+            bound: u32::MAX,
+        }
+    }
+
+    fn observe_hash(&mut self, hash: u32) {
+        if hash == u32::MAX || hash >= self.bound {
+            return;
+        }
+        self.values.push(hash);
+        if self.values.len() >= self.sample_size * 2 {
+            self.compact();
+        }
+    }
+
+    fn compact(&mut self) {
+        if self.values.is_empty() {
+            self.bound = u32::MAX;
+            return;
+        }
+        self.values.sort_unstable();
+        self.values.dedup();
+        if self.values.len() > self.sample_size {
+            self.values.truncate(self.sample_size);
+        }
+        self.bound = if self.values.len() == self.sample_size {
+            self.values[self.sample_size - 1]
+        } else {
+            u32::MAX
+        };
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.values.extend(other.values);
+        self.compact();
+    }
+
+    fn estimate_distinct_hashes(&mut self) -> f64 {
+        self.compact();
+        if self.values.len() < self.sample_size {
+            self.values.len() as f64
+        } else {
+            let threshold = self.values[self.sample_size - 1] as f64 + 1.0;
+            ((self.sample_size - 1) as f64) * HASH_SPACE_SIZE / threshold
         }
     }
 }
@@ -118,6 +180,83 @@ fn optimal_smer_length(block_size: usize, k: u16, m: u16, n_hashes: usize) -> u1
 
 fn default_smer_length(k: u16) -> u16 {
     k.saturating_sub(10).max(1)
+}
+
+fn infer_block_size_bits(size: usize, input_cardinality: usize, k: u16, m: u16) -> usize {
+    let raw_block_size =
+        (size as f64 * max_superkmer_kmers(k, m) as f64 / input_cardinality as f64).max(1.0);
+    let max_block_size = usize::max(1, size / 1024) as f64;
+    let block_size_exponent = raw_block_size
+        .clamp(1.0, max_block_size)
+        .log2()
+        .round()
+        .clamp(0.0, max_block_size.log2()) as u32;
+    1usize << block_size_exponent
+}
+
+fn correct_hash_space_cardinality(distinct_hashes: f64) -> f64 {
+    let saturated = (distinct_hashes / HASH_SPACE_SIZE).clamp(0.0, 1.0 - f64::EPSILON);
+    -HASH_SPACE_SIZE * (-saturated).ln_1p()
+}
+
+fn add_valid_hashes_to_sketch(
+    estimator: &mut BottomSketchEstimator,
+    hashes: PaddedIt<impl ChunkIt<u32x8>>,
+) {
+    let lane_len = hashes.it.len();
+    let valid_hash_count = lane_len * 8 - hashes.padding;
+    let mut seen = 0usize;
+    for lane_hashes in hashes.it {
+        let remaining = valid_hash_count.saturating_sub(seen);
+        if remaining == 0 {
+            break;
+        }
+        let take = remaining.min(8);
+        for &hash in &lane_hashes.as_array_ref()[..take] {
+            estimator.observe_hash(hash);
+        }
+        seen += 8;
+    }
+}
+
+fn estimate_input_cardinality(filename: &str, k: usize, chunk_size: usize) -> (usize, PhaseStats) {
+    let timer = PhaseTimer::start();
+    let reader = parse_fastx_file(filename).expect("valid path/file");
+    let chunked_lines = Hell {
+        fxreader: reader,
+        chunk_size,
+    };
+    let mut estimator = BottomSketchEstimator::new(CARDINALITY_SKETCH_SIZE);
+    for chunk in chunked_lines {
+        let chunk_estimator = chunk
+            .into_par_iter()
+            .filter(|line| line.len() >= k)
+            .flat_map_iter(|line| {
+                split_sequence_for_parallelism(line, k as u16, INTRA_RECORD_CHUNK_KMERS).into_iter()
+            })
+            .fold(
+                || (BottomSketchEstimator::new(CARDINALITY_SKETCH_SIZE), <NtHasher>::new(k)),
+                |(mut local_estimator, hasher), line| {
+                    let sequence = PackedNSeqVec::from_ascii(&line);
+                    let hashes = hasher.hash_valid_kmers_simd(sequence.as_slice(), 1);
+                    add_valid_hashes_to_sketch(&mut local_estimator, hashes);
+                    (local_estimator, hasher)
+                },
+            )
+            .map(|(local_estimator, _)| local_estimator)
+            .reduce(
+                || BottomSketchEstimator::new(CARDINALITY_SKETCH_SIZE),
+                |mut left, right| {
+                    left.merge(right);
+                    left
+                },
+            );
+        estimator.merge(chunk_estimator);
+    }
+
+    let distinct_hashes = estimator.estimate_distinct_hashes();
+    let estimated_cardinality = correct_hash_space_cardinality(distinct_hashes);
+    (estimated_cardinality.round() as usize, timer.finish())
 }
 
 fn flush_stdout_and_exit(code: i32) -> ! {
@@ -178,9 +317,14 @@ struct Args {
     #[arg(short, long)]
     size: Option<usize>,
 
-    ///size (in bits) of each of the bloom filters blocks, expressed as a power of 2
-    #[arg(short, long, default_value_t = 13)]
-    block_size: usize,
+    ///size (in bits) of each bloom block, expressed as a power of 2; if omitted while m is fixed,
+    ///it can be inferred from the RAM budget and input cardinality
+    #[arg(short, long)]
+    block_size: Option<usize>,
+
+    ///input cardinality in k-mers, used to infer block size when m is fixed and block size is not
+    #[arg(long)]
+    input_cardinality: Option<usize>,
 
     ///number of reads to be distributed in a row to each thread
     #[arg(long, default_value_t = 100)]
@@ -229,6 +373,25 @@ pub fn main() {
     if let Some(n_hashes) = args.n_hashes {
         assert!(n_hashes > 0);
     }
+    if let Some(input_cardinality) = args.input_cardinality {
+        assert!(input_cardinality > 0);
+    }
+
+    //number of threads allowed
+    unsafe {
+        env::set_var("RAYON_NUM_THREADS", args.threads.clone());
+    }
+
+    let filename = resolve_input_path(args.input.as_deref(), args.indexed_file.as_deref());
+    let estimated_input_cardinality = if args.input_cardinality.is_none() {
+        Some(estimate_input_cardinality(
+            &filename,
+            k as usize,
+            args.sequential_fallback,
+        ))
+    } else {
+        None
+    };
 
     let m: u16;
     let n_hashes: usize;
@@ -247,9 +410,31 @@ pub fn main() {
         Some(size_exponent) => 1 << size_exponent,
         None => auto_size_bits_from_ram_gb(args.ram),
     };
-    block_size = 1 << args.block_size;
+    match (args.m, args.block_size) {
+        (Some(fixed_m), Some(block_size_exponent)) => {
+            m = fixed_m;
+            block_size = 1 << block_size_exponent;
+        }
+        (Some(fixed_m), None) => {
+            m = fixed_m;
+            let input_cardinality = args
+                .input_cardinality
+                .or_else(|| estimated_input_cardinality.map(|(estimate, _)| estimate))
+                .expect("input cardinality estimation failed");
+            block_size = infer_block_size_bits(size, input_cardinality, k, m);
+        }
+        (None, Some(block_size_exponent)) => {
+            block_size = 1 << block_size_exponent;
+            nb_blocks = size / block_size;
+            m = (nb_blocks as f64).log2() as u16 / 2 + args.b;
+        }
+        (None, None) => {
+            block_size = 1 << 13;
+            nb_blocks = size / block_size;
+            m = (nb_blocks as f64).log2() as u16 / 2 + args.b;
+        }
+    }
     nb_blocks = size / block_size;
-    m = args.m.unwrap_or_else(|| (nb_blocks as f64).log2() as u16 / 2 + args.b);
     assert!(m < 32);
     assert!(m > 0);
     assert!(m <= k);
@@ -287,12 +472,17 @@ pub fn main() {
         nb_blocks = 1024;
     }
 
-    //number of threads allowed
-    unsafe {
-        env::set_var("RAYON_NUM_THREADS", args.threads);
+    if !auto_bench {
+        if let Some((estimated_input_cardinality, estimation_stats)) = estimated_input_cardinality {
+            println!("estimated input cardinality : {estimated_input_cardinality}");
+            println!("cardinality estimation time (s) : {}", estimation_stats.wall_seconds);
+            println!("cardinality estimation cpu time (s) : {}", estimation_stats.cpu_seconds);
+            println!("cardinality estimation cpu usage (%) : {}", estimation_stats.cpu_usage_percent());
+        }
+        println!("Parameters : ");
+        println!("k : {k}, m: {m}, s : {s}, n_hashes : {n_hashes}");
+        println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
     }
-
-    let filename = resolve_input_path(args.input.as_deref(), args.indexed_file.as_deref());
 
     //we create the needed data structures to store everything
     let bloom = BloomFilter::new(size, n_hashes, k as usize, block_size, nb_blocks);
@@ -470,28 +660,21 @@ pub fn main() {
             duration_overhead_decycling,
             )
     }
-    else {
-        println!("Parameters : ");
-        println!("k : {k}, m: {m}, s : {s}, n_hashes : {n_hashes}");
-        println!("bf size : {size}, block size {block_size}, nb_blocks {nb_blocks}");
+    else if counting {
+        if !no_bloom {
+            let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = frozen_bloom.count_it_all();
+            let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
+            let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
+            let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
+            let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
+            let overfilled_rate: f64 = fill_counter as f64/n_z_bloom as f64;
 
-        if counting {
-
-            if !no_bloom {
-                let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = frozen_bloom.count_it_all();
-                let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
-                let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
-                let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
-                let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-                let overfilled_rate: f64 = fill_counter as f64/n_z_bloom as f64;
-
-                println!("Non zero bf amount : {n_z_bloom}");
-                println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
-                println!("Max bloom fill rate : {max_bloom_rate}");
-                println!("Median fill rate : {median_bloom_rate}");
-                println!("Average fill rate : {average_bloom_rate}");
-                println!("Overfilled rate : {overfilled_rate}");
-            }
+            println!("Non zero bf amount : {n_z_bloom}");
+            println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
+            println!("Max bloom fill rate : {max_bloom_rate}");
+            println!("Median fill rate : {median_bloom_rate}");
+            println!("Average fill rate : {average_bloom_rate}");
+            println!("Overfilled rate : {overfilled_rate}");
         }
     }
     flush_stdout_and_exit(0);
@@ -644,10 +827,9 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     let blocknum: usize = (hashed_minimizer as usize)&1023;
     let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
-    let subblock = &mut block[subblocknum];
     for address in relevant_addresses {
-            if !subblock.get(*address) {
-                subblock.set(*address, true);
+            if !block.get(subblocknum, *address) {
+                block.set(subblocknum, *address, true);
             }
     }
     drop(block);
@@ -663,15 +845,14 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
     let blocknum: usize = (hashed_minimizer as usize)&1023;
     let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
-    let subblock = &mut block[subblocknum];
 
     let mut current_smer = sequence.slice(start_pos as usize..start_pos as usize + l as usize).as_u128();
     for offset in 0..smer_count {
         let mut hash = hash_u128_to_u64(current_smer);
         for _ in 0..bloom.n_hashes {
             let address = hash as usize & address_mask;
-            if !subblock.get(address) {
-                subblock.set(address, true);
+            if !block.get(subblocknum, address) {
+                block.set(subblocknum, address, true);
             }
             hash = xorshift_u64(hash);
         }
@@ -726,11 +907,25 @@ fn write_auto_bench_stdout(
 mod tests {
     use super::{
         PhaseStats, auto_size_bits_from_ram_gb, handle_sequence, handle_super_kmer,
-        handle_super_kmer_u128, max_superkmer_address_capacity, optimal_hash_count,
-        optimal_smer_length, default_smer_length, resolve_input_path,
+        handle_super_kmer_u128, infer_block_size_bits, max_superkmer_address_capacity,
+        optimal_hash_count, optimal_smer_length, default_smer_length, resolve_input_path,
         split_sequence_for_parallelism, BloomFilter, Decycler,
+        estimate_input_cardinality,
     };
     use packed_seq::{PackedSeqVec, SeqVec};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("bloomybloom_main_{name}_{unique}_{}", std::process::id()));
+        path
+    }
 
     fn build_bloom(k: usize) -> BloomFilter {
         BloomFilter::new(1 << 20, 3, k, 1 << 10, 1 << 10)
@@ -915,6 +1110,23 @@ mod tests {
     #[test]
     fn default_smer_length_clamps_to_one() {
         assert_eq!(default_smer_length(5), 1);
+    }
+
+    #[test]
+    fn infer_block_size_bits_matches_formula_for_exact_power_of_two() {
+        assert_eq!(infer_block_size_bits(1 << 38, 11 << 25, 31, 21), 1 << 13);
+    }
+
+    #[test]
+    fn estimate_input_cardinality_tracks_canonical_kmers() {
+        let path = temp_path("cardinality.fasta");
+        fs::write(&path, b">seq1\nACGTACGT\n").unwrap();
+
+        let (estimate, _) = estimate_input_cardinality(&path.to_string_lossy(), 3, 2);
+        assert!(estimate >= 1);
+        assert!(estimate <= 4);
+
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
