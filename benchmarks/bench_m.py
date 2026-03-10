@@ -14,7 +14,7 @@ except ImportError as exc:
     raise SystemExit("matplotlib is required: pip install matplotlib") from exc
 
 
-BENCHMARK_NAME = "bench_threads"
+BENCHMARK_NAME = "bench_m"
 THREAD_VALUE = 16
 K_VALUE = 31
 BLOCK_SIZE = 13
@@ -30,6 +30,7 @@ METRIC_PATTERNS = {
     "index_cpu_s": r"index cpu time \(s\) : ([0-9eE+.\-]+)",
     "query_wall_s": r"total query time \(s\) : ([0-9eE+.\-]+)",
     "query_cpu_s": r"query cpu time \(s\) : ([0-9eE+.\-]+)",
+    "fp": r"false positive rate : ([0-9eE+.\-]+)",
 }
 
 
@@ -71,6 +72,18 @@ def run_bloom(root: Path, command: list[str]) -> dict[str, float]:
                 f"Missing metric {key} in output.\nSTDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
             )
         metrics[key] = float(match.group(1))
+
+    #adding a run to check for false positives
+    command.append("--counting")
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    match = re.search(r"false positive rate : ([0-9eE+.\-]+)", completed.stdout)
+    metrics["fp"] = float(match.group(1))
     return metrics
 
 
@@ -114,10 +127,12 @@ def write_tsv(rows: list[dict[str, object]], output_path: Path) -> None:
         "ram_gb",
         "threads",
         "repeats",
+        "m",
         "index_wall_s",
         "index_cpu_s",
         "query_wall_s",
         "query_cpu_s",
+        "fp",
     ]
     with output_path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
@@ -131,8 +146,9 @@ def plot_rows(rows: list[dict[str, object]], output_path: Path) -> None:
     index_cpu = [float(row["index_cpu_s"]) for row in rows]
     query_wall = [float(row["query_wall_s"]) for row in rows]
     query_cpu = [float(row["query_cpu_s"]) for row in rows]
+    false_positives = [float(row["fp"]) for row in rows]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 5), sharex=True)
 
     axes[0].plot(x_values, index_wall, marker="o", label="index wall")
     axes[0].plot(x_values, index_cpu, marker="o", label="index cpu")
@@ -149,6 +165,13 @@ def plot_rows(rows: list[dict[str, object]], output_path: Path) -> None:
     axes[1].set_ylabel("seconds")
     axes[1].grid(True, alpha=0.3)
     axes[1].legend()
+
+    axes[2].plot(x_values, false_positives, marker="o", label="query wall")
+    axes[2].set_title("False positve rates")
+    axes[2].set_xlabel("m")
+    axes[2].set_ylabel("FP rate")
+    axes[2].grid(True, alpha=0.3)
+    axes[2].legend()
 
     fig.suptitle("bloomybloom benchmark: minimizer sweep")
     fig.tight_layout()
