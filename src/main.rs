@@ -29,6 +29,7 @@ use std::io::{self, Write};
 use seq_hash::{KmerHasher, NtHasher};
 
 const INTRA_RECORD_CHUNK_KMERS: usize = 1 << 20;
+const TARGET_CHUNK_SIZE: usize = 1<<15; //aiming for 32k long "reads"
 const BITS_PER_GIB: usize = 1 << 33;
 const HALF_FILL_LOG: f64 = std::f64::consts::LN_2;
 const CARDINALITY_SKETCH_SIZE: usize = 1 << 13;
@@ -653,7 +654,7 @@ pub fn main() {
         let false_negs = false_neg_list.lock().unwrap().to_vec();
         frozen_bloom.count_false_bloom(false_negs, k, m, s, &decycler_set, minimizer_mode)
     } else {
-        (0.0, 0.0)
+        (-1.0, -1.0)
     };
     let whole_run_duration = whole_run_start.elapsed();
     if !auto_bench {
@@ -677,6 +678,7 @@ pub fn main() {
         println!("total query time (s) : {}", query_stats.wall_seconds);
         println!("query cpu time (s) : {}", query_stats.cpu_seconds);
         println!("query cpu usage (%) : {}", query_stats.cpu_usage_percent());
+        println!("false positive rate : {}", false_positive_rate);
     }
     
     //to prevent optims
@@ -735,10 +737,10 @@ fn split_sequence_for_parallelism(
         return vec![sequence];
     }
 
-    let mut chunks = Vec::with_capacity((total_kmers + target_chunk_kmers - 1) / target_chunk_kmers);
+    let mut chunks = Vec::with_capacity((total_kmers + 1) / TARGET_CHUNK_SIZE);
     let mut start_kmer = 0;
     while start_kmer < total_kmers {
-        let end_kmer = usize::min(start_kmer + target_chunk_kmers, total_kmers);
+        let end_kmer = usize::min(start_kmer + TARGET_CHUNK_SIZE, total_kmers);
         let chunk_start = start_kmer;
         let chunk_end = end_kmer + k as usize - 1;
         chunks.push(sequence[chunk_start..chunk_end].to_vec());
