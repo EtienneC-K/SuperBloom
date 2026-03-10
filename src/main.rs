@@ -561,14 +561,6 @@ pub fn main() {
                     continue;
                 }
 
-                if counting {
-                    let dice_roll = rand::rng().random_range(0..5000);
-                    if dice_roll == 0 {
-                        let mut false_negs = false_neg_list.lock().unwrap();
-                        false_negs.push(PackedSeqVec::from_ascii(&line));
-                    }
-                }
-
                 sequence_chunks.extend(split_sequence_for_parallelism(
                     line,
                     k,
@@ -580,6 +572,15 @@ pub fn main() {
                 || vec![0; max_superkmer_address_capacity(k, m, s, n_hashes)],
                 |all_addresses, line| {
                     let sequence = PackedSeqVec::from_ascii(&line);
+
+                    if counting {
+                        let dice_roll = rand::rng().random_range(0..40);
+                        if dice_roll == 0 {
+                            let mut false_negs = false_neg_list.lock().unwrap();
+                            false_negs.push(sequence.clone());
+                        }
+                    }
+
                     inserted_kmer_count.fetch_add(
                         (sequence.len() + 1 - k as usize) as u64,
                         Ordering::Relaxed,
