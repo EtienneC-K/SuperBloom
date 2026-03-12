@@ -173,6 +173,7 @@ def main() -> None:
 
     rows: list[dict[str, object]] = []
     for size_exponent in SIZE_EXPONENT_VALUES:
+        print(f"next loop with {size_exponent}")
         metrics_list = [
             run_bloom(root, build_command(args.index_file, args.query_file, size_exponent))
             for _ in range(REPEATS)

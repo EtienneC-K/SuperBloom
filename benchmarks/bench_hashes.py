@@ -173,6 +173,7 @@ def main() -> None:
 
     rows: list[dict[str, object]] = []
     for n_hashes in HASH_COUNTS:
+        print(f"next loop with {n_hashes}")
         metrics_list = [
             run_bloom(root, build_command(args.index_file, args.query_file, n_hashes))
             for _ in range(REPEATS)

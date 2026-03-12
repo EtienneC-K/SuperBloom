@@ -157,6 +157,7 @@ def main() -> None:
 
     rows: list[dict[str, object]] = []
     for threads in THREAD_VALUES:
+        print(f"next loop with {threads}")
         metrics_list = [
             run_bloom(root, build_command(args.index_file, args.query_file, threads))
             for _ in range(REPEATS)
