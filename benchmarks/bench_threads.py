@@ -15,9 +15,9 @@ except ImportError as exc:
 
 
 BENCHMARK_NAME = "bench_threads"
-THREAD_VALUES = [1, 2, 4, 8, 16, 32]
+THREAD_VALUES = [1, 2, 4, 8, 16] #TODO: change it for actual bench
 K_VALUE = 31
-RAM_GB = 32
+RAM_GB = 32 #TODO: change it for actual bench
 REPEATS = 1
 BUILD_FIRST = True
 USE_INDEXED_FILE_FLAG = False

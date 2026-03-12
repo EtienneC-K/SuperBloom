@@ -14,12 +14,12 @@ except ImportError as exc:
     raise SystemExit("matplotlib is required: pip install matplotlib") from exc
 
 
-BENCHMARK_NAME = "bench_hashes"
-HASH_COUNTS = [1, 2, 3, 4]
+BENCHMARK_NAME = "block_size_exponent"
+HASH_COUNT = 3
 K_VALUE = 31
 M_VALUE = 13
 S_VALUE = 28
-SIZE_EXPONENT = 38 #TODO not forget to change it for the bigger machine
+SIZE_EXPONENT_VALUES = [33, 34, 35, 36, 37, 38] #TODO not forget to change it for the bigger machine
 BLOCK_SIZE_EXPONENT = 13
 THREADS = 16 #TODO not forget to change it for the bigger machine
 REPEATS = 1
@@ -76,7 +76,7 @@ def run_bloom(root: Path, command: list[str]) -> dict[str, float]:
     return metrics
 
 
-def build_command(index_file: str, query_file: str, n_hashes: int) -> list[str]:
+def build_command(index_file: str, query_file: str, size_exponent: int) -> list[str]:
     command = [
         "./target/release/bloomybloom",
         "--query-file",
@@ -90,11 +90,11 @@ def build_command(index_file: str, query_file: str, n_hashes: int) -> list[str]:
         "-s",
         str(S_VALUE),
         "--size",
-        str(SIZE_EXPONENT),
+        str(size_exponent),
         "--block-size",
         str(BLOCK_SIZE_EXPONENT),
         "--n-hashes",
-        str(n_hashes),
+        str(HASH_COUNT),
     ]
     if USE_INDEXED_FILE_FLAG:
         command.extend(["--indexed-file", str(Path(index_file).expanduser())])
@@ -136,7 +136,7 @@ def write_tsv(rows: list[dict[str, object]], output_path: Path) -> None:
 
 
 def plot_rows(rows: list[dict[str, object]], output_path: Path) -> None:
-    x_values = [int(row["n_hashes"]) for row in rows]
+    x_values = [int(row["size_exponent"]) for row in rows]
     index_wall = [float(row["index_wall_s"]) for row in rows]
     index_cpu = [float(row["index_cpu_s"]) for row in rows]
     query_wall = [float(row["query_wall_s"]) for row in rows]
@@ -147,7 +147,7 @@ def plot_rows(rows: list[dict[str, object]], output_path: Path) -> None:
     axes[0].plot(x_values, index_wall, marker="o", label="index wall")
     axes[0].plot(x_values, index_cpu, marker="o", label="index cpu")
     axes[0].set_title("Index Phase")
-    axes[0].set_xlabel("n_hashes")
+    axes[0].set_xlabel("size_exponent")
     axes[0].set_ylabel("seconds")
     axes[0].grid(True, alpha=0.3)
     axes[0].legend()
@@ -155,7 +155,7 @@ def plot_rows(rows: list[dict[str, object]], output_path: Path) -> None:
     axes[1].plot(x_values, query_wall, marker="o", label="query wall")
     axes[1].plot(x_values, query_cpu, marker="o", label="query cpu")
     axes[1].set_title("Query Phase")
-    axes[1].set_xlabel("n_hashes")
+    axes[1].set_xlabel("size_exponent")
     axes[1].set_ylabel("seconds")
     axes[1].grid(True, alpha=0.3)
     axes[1].legend()
@@ -172,9 +172,9 @@ def main() -> None:
     build_release(root)
 
     rows: list[dict[str, object]] = []
-    for n_hashes in HASH_COUNTS:
+    for size_exponent in SIZE_EXPONENT_VALUES:
         metrics_list = [
-            run_bloom(root, build_command(args.index_file, args.query_file, n_hashes))
+            run_bloom(root, build_command(args.index_file, args.query_file, size_exponent))
             for _ in range(REPEATS)
         ]
         metrics = aggregate(metrics_list)
@@ -185,10 +185,10 @@ def main() -> None:
             "k": K_VALUE,
             "m": M_VALUE,
             "s": S_VALUE,
-            "size_exponent": SIZE_EXPONENT,
+            "size_exponent": size_exponent,
             "block_size_exponent": BLOCK_SIZE_EXPONENT,
             "threads": THREADS,
-            "n_hashes": n_hashes,
+            "n_hashes": HASH_COUNT,
             "repeats": REPEATS,
             **metrics,
         })
