@@ -233,7 +233,7 @@ fn estimate_input_cardinality(filename: &str, k: usize, chunk_size: usize) -> (u
             .into_par_iter()
             .filter(|line| line.len() >= k)
             .flat_map_iter(|line| {
-                split_sequence_for_parallelism(line, k as u16, INTRA_RECORD_CHUNK_KMERS).into_iter()
+                split_sequence_for_parallelism(line, k as u16, INTRA_RECORD_CHUNK_KMERS, None).into_iter()
             })
             .fold(
                 || (BottomSketchEstimator::new(CARDINALITY_SKETCH_SIZE), <NtHasher>::new(k)),
@@ -565,6 +565,7 @@ pub fn main() {
                     line,
                     k,
                     INTRA_RECORD_CHUNK_KMERS,
+                    None,
                 ));
             }
 
@@ -624,7 +625,7 @@ pub fn main() {
             let sequence_chunks: Vec<Vec<u8>> = chunk
                 .into_iter()
                 .filter(|line| line.len() >= k as usize)
-                .flat_map(|line| split_sequence_for_parallelism(line, k, INTRA_RECORD_CHUNK_KMERS))
+                .flat_map(|line| split_sequence_for_parallelism(line, k, INTRA_RECORD_CHUNK_KMERS, None))
                 .collect();
 
             sequence_chunks.into_par_iter().for_each(|line| {
@@ -728,6 +729,7 @@ fn split_sequence_for_parallelism(
     sequence: Vec<u8>,
     k: u16,
     target_chunk_kmers: usize,
+    target_chunk_size: Option<usize>,
 ) -> Vec<Vec<u8>> {
     if sequence.len() < k as usize {
         return vec![sequence];
@@ -738,10 +740,11 @@ fn split_sequence_for_parallelism(
         return vec![sequence];
     }
 
-    let mut chunks = Vec::with_capacity((total_kmers + 1) / TARGET_CHUNK_SIZE);
+    let chunk_size = target_chunk_size.unwrap_or(TARGET_CHUNK_SIZE);
+    let mut chunks = Vec::with_capacity((total_kmers + 1) / chunk_size);
     let mut start_kmer = 0;
     while start_kmer < total_kmers {
-        let end_kmer = usize::min(start_kmer + TARGET_CHUNK_SIZE, total_kmers);
+        let end_kmer = usize::min(start_kmer + chunk_size, total_kmers);
         let chunk_start = start_kmer;
         let chunk_end = end_kmer + k as usize - 1;
         chunks.push(sequence[chunk_start..chunk_end].to_vec());
@@ -1112,19 +1115,19 @@ mod tests {
 
     #[test]
     fn split_sequence_for_parallelism_keeps_short_sequences_intact() {
-        let chunks = split_sequence_for_parallelism(b"ACGTAC".to_vec(), 7, 4);
+        let chunks = split_sequence_for_parallelism(b"ACGTAC".to_vec(), 7, 4, None);
         assert_eq!(chunks, vec![b"ACGTAC".to_vec()]);
     }
 
     #[test]
     fn split_sequence_for_parallelism_keeps_small_kmer_sets_intact() {
-        let chunks = split_sequence_for_parallelism(b"ACGTAC".to_vec(), 4, 3);
+        let chunks = split_sequence_for_parallelism(b"ACGTAC".to_vec(), 4, 3, None);
         assert_eq!(chunks, vec![b"ACGTAC".to_vec()]);
     }
 
     #[test]
     fn split_sequence_for_parallelism_splits_into_overlapping_kmer_ranges() {
-        let chunks = split_sequence_for_parallelism(b"ACGTACGTAC".to_vec(), 4, 3);
+        let chunks = split_sequence_for_parallelism(b"ACGTACGTAC".to_vec(), 4, 3, Some(3));
         assert_eq!(
             chunks,
             vec![
