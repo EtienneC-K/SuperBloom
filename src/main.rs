@@ -2,34 +2,34 @@
 //! is tuned for a specific labtop (for now) and only supports up to 31-mers (and not optimal for
 //! k<31)
 
-mod input;
 mod bloom;
+pub mod decyclers;
+mod input;
+pub mod minimizers;
+pub mod super_bitvec;
 mod unit_tests_one_day;
 pub mod utils;
-pub mod decyclers;
-pub mod super_bitvec;
-pub mod minimizers;
 
-use input::{Hell};
-use minimizers::{selected_mins_x_pos, MinimizerMode};
-use decyclers::{Decycler};
 use bloom::{BloomFilter, FrozenBloomFilter};
-use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
-use packed_seq::{ChunkIt, PackedNSeqVec, PackedSeq, PackedSeqVec, PaddedIt, Seq, SeqVec, u32x8};
-use std::env; //for backtrace
-use rayon::prelude::*;
 use clap::Parser;
+use decyclers::Decycler;
+use input::Hell;
+use libc::{RUSAGE_SELF, getrusage, rusage};
+use minimizers::{MinimizerMode, selected_mins_x_pos};
+use needletail::parse_fastx_file;
+use packed_seq::{ChunkIt, PackedNSeqVec, PackedSeq, PackedSeqVec, PaddedIt, Seq, SeqVec, u32x8};
+use rand::Rng;
+use rayon::prelude::*;
+use seq_hash::{KmerHasher, NtHasher};
+use std::env; //for backtrace
+use std::io::{self, Write};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use needletail::parse_fastx_file;
-use rand::Rng;
 use std::time::{Duration, Instant};
-use libc::{RUSAGE_SELF, getrusage, rusage};
-use std::io::{self, Write};
-use seq_hash::{KmerHasher, NtHasher};
+use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
 
 const INTRA_RECORD_CHUNK_KMERS: usize = 1 << 20;
-const TARGET_CHUNK_SIZE: usize = 1<<15; //aiming for 32k long "reads"
+const TARGET_CHUNK_SIZE: usize = 1 << 15; //aiming for 32k long "reads"
 const BITS_PER_GIB: usize = 1 << 33;
 const HALF_FILL_LOG: f64 = std::f64::consts::LN_2;
 const CARDINALITY_SKETCH_SIZE: usize = 1 << 13;
@@ -174,9 +174,7 @@ fn optimal_smer_length(block_size: usize, k: u16, m: u16, n_hashes: usize) -> u1
     let max_superkmer = max_superkmer_kmers(k, m) as f64;
     let raw_s = k as f64 + max_superkmer - (block_size as f64 * HALF_FILL_LOG) / n_hashes as f64;
     let max_supported_s = usize::min(k as usize, 61) as f64;
-    raw_s
-        .round()
-        .clamp(1.0, max_supported_s) as u16
+    raw_s.round().clamp(1.0, max_supported_s) as u16
 }
 
 fn default_smer_length(k: u16) -> u16 {
@@ -233,10 +231,16 @@ fn estimate_input_cardinality(filename: &str, k: usize, chunk_size: usize) -> (u
             .into_par_iter()
             .filter(|line| line.len() >= k)
             .flat_map_iter(|line| {
-                split_sequence_for_parallelism(line, k as u16, INTRA_RECORD_CHUNK_KMERS, None).into_iter()
+                split_sequence_for_parallelism(line, k as u16, INTRA_RECORD_CHUNK_KMERS, None)
+                    .into_iter()
             })
             .fold(
-                || (BottomSketchEstimator::new(CARDINALITY_SKETCH_SIZE), <NtHasher>::new(k)),
+                || {
+                    (
+                        BottomSketchEstimator::new(CARDINALITY_SKETCH_SIZE),
+                        <NtHasher>::new(k),
+                    )
+                },
                 |(mut local_estimator, hasher), line| {
                     let sequence = PackedNSeqVec::from_ascii(&line);
                     let hashes = hasher.hash_valid_kmers_simd(sequence.as_slice(), 1);
@@ -264,7 +268,6 @@ fn flush_stdout_and_exit(code: i32) -> ! {
     io::stdout().flush().expect("stdout flush failed");
     std::process::exit(code);
 }
-
 
 ///taking care of all the needed command line arguments
 #[derive(Parser, Debug)]
@@ -360,7 +363,6 @@ struct Args {
     /// t-mer length used by open-closed minimizers; implies --open-closed-minimizer
     #[arg(long)]
     open_closed_t: Option<u16>,
-
 }
 
 pub fn main() {
@@ -490,7 +492,6 @@ pub fn main() {
     counting = args.counting;
     auto_bench = args.auto_bench;
 
-
     if no_bloom {
         size = 1024;
         block_size = 1;
@@ -500,9 +501,18 @@ pub fn main() {
     if !auto_bench {
         if let Some((estimated_input_cardinality, estimation_stats)) = estimated_input_cardinality {
             println!("estimated input cardinality : {estimated_input_cardinality}");
-            println!("cardinality estimation time (s) : {}", estimation_stats.wall_seconds);
-            println!("cardinality estimation cpu time (s) : {}", estimation_stats.cpu_seconds);
-            println!("cardinality estimation cpu usage (%) : {}", estimation_stats.cpu_usage_percent());
+            println!(
+                "cardinality estimation time (s) : {}",
+                estimation_stats.wall_seconds
+            );
+            println!(
+                "cardinality estimation cpu time (s) : {}",
+                estimation_stats.cpu_seconds
+            );
+            println!(
+                "cardinality estimation cpu usage (%) : {}",
+                estimation_stats.cpu_usage_percent()
+            );
         }
         println!("Parameters : ");
         println!("k : {k}, m: {m}, s : {s}, n_hashes : {n_hashes}");
@@ -544,8 +554,8 @@ pub fn main() {
         let reader = parse_fastx_file(&filename).expect("valid path/file");
 
         let chunked_lines = Hell {
-            fxreader : reader,
-            chunk_size : sequential_fallback,
+            fxreader: reader,
+            chunk_size: sequential_fallback,
         };
 
         chunked_lines.par_bridge().for_each(|chunk| {
@@ -582,10 +592,8 @@ pub fn main() {
                         }
                     }
 
-                    inserted_kmer_count.fetch_add(
-                        (sequence.len() + 1 - k as usize) as u64,
-                        Ordering::Relaxed,
-                    );
+                    inserted_kmer_count
+                        .fetch_add((sequence.len() + 1 - k as usize) as u64, Ordering::Relaxed);
                     let local_kmer_sum = handle_sequence(
                         &bloom,
                         sequence,
@@ -617,15 +625,17 @@ pub fn main() {
         let reader = parse_fastx_file(&args.query_file).expect("valid path/file");
 
         let chunked_lines = Hell {
-            fxreader : reader,
-            chunk_size : sequential_fallback,
+            fxreader: reader,
+            chunk_size: sequential_fallback,
         };
 
         chunked_lines.par_bridge().for_each(|chunk| {
             let sequence_chunks: Vec<Vec<u8>> = chunk
                 .into_iter()
                 .filter(|line| line.len() >= k as usize)
-                .flat_map(|line| split_sequence_for_parallelism(line, k, INTRA_RECORD_CHUNK_KMERS, None))
+                .flat_map(|line| {
+                    split_sequence_for_parallelism(line, k, INTRA_RECORD_CHUNK_KMERS, None)
+                })
                 .collect();
 
             sequence_chunks.into_par_iter().for_each(|line| {
@@ -633,7 +643,14 @@ pub fn main() {
                 let presence_vec = if s <= 31 {
                     frozen_bloom.check_sequence(sequence, k, m, s, &decycler_set, minimizer_mode)
                 } else {
-                    frozen_bloom.check_sequence_u128(sequence, k, m, s, &decycler_set, minimizer_mode)
+                    frozen_bloom.check_sequence_u128(
+                        sequence,
+                        k,
+                        m,
+                        s,
+                        &decycler_set,
+                        minimizer_mode,
+                    )
                 };
                 let local_count = presence_vec.len() as u64;
                 let local_pos_count = sum_vec_bool(&presence_vec) as u64;
@@ -665,45 +682,54 @@ pub fn main() {
         let whole_run_ns = whole_run_duration.as_nanos() as f64;
         println!("inserted kmers : {inserted_kmers}");
         if inserted_kmers > 0 {
-            println!("ns per inserted kmer : {}", whole_run_ns / inserted_kmers as f64);
+            println!(
+                "ns per inserted kmer : {}",
+                whole_run_ns / inserted_kmers as f64
+            );
         } else {
             println!("ns per inserted kmer : N/A");
         }
         if queried_kmers > 0 {
-            println!("ns per queried kmer : {}", whole_run_ns / queried_kmers as f64);
+            println!(
+                "ns per queried kmer : {}",
+                whole_run_ns / queried_kmers as f64
+            );
         } else {
             println!("ns per queried kmer : N/A");
         }
         println!("total indexing time (s) : {}", indexing_stats.wall_seconds);
         println!("index cpu time (s) : {}", indexing_stats.cpu_seconds);
-        println!("index cpu usage (%) : {}", indexing_stats.cpu_usage_percent());
+        println!(
+            "index cpu usage (%) : {}",
+            indexing_stats.cpu_usage_percent()
+        );
         println!("total query time (s) : {}", query_stats.wall_seconds);
         println!("query cpu time (s) : {}", query_stats.cpu_seconds);
         println!("query cpu usage (%) : {}", query_stats.cpu_usage_percent());
         println!("false positive rate : {}", false_positive_rate);
     }
-    
+
     //to prevent optims
     //printing only a line for the benchmark evaluating programm if option --auto-bench if on
     if auto_bench {
         write_auto_bench_stdout(
-            no_bloom, 
+            no_bloom,
             frozen_bloom,
             nb_blocks,
             block_size,
             false_negative_rate,
             false_positive_rate,
             duration_overhead_decycling,
-            )
-    }
-    else if counting {
+        )
+    } else if counting {
         if !no_bloom {
-            let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = frozen_bloom.count_it_all();
-            let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
-            let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
-            let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
-            let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-            let overfilled_rate: f64 = fill_counter as f64/n_z_bloom as f64;
+            let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) =
+                frozen_bloom.count_it_all();
+            let n_z_bloom_rate: f64 = n_z_bloom as f64 / nb_blocks as f64;
+            let max_bloom_rate: f64 = max_bloom as f64 / block_size as f64;
+            let median_bloom_rate: f64 = median_bloom as f64 / block_size as f64;
+            let average_bloom_rate: f64 = average_bloom as f64 / block_size as f64;
+            let overfilled_rate: f64 = fill_counter as f64 / n_z_bloom as f64;
 
             println!("Non zero bf amount : {n_z_bloom}");
             println!("Non zero bloom filter block rates : {n_z_bloom_rate}");
@@ -765,62 +791,93 @@ fn handle_sequence(
     decycler_set: &Decycler,
     minimizer_mode: MinimizerMode,
     l: u16,
-    ) -> u64 {
+) -> u64 {
     if original_sequence.len() < k as usize {
         return 0;
     }
-    let address_mask: usize = bloom.block_size-1;
+    let address_mask: usize = bloom.block_size - 1;
     let mut local_kmer_sum: u64 = 0;
     let (super_kmers_positions, minimizer_values, sequence): (Vec<u32>, Vec<u64>, PackedSeqVec) =
         selected_mins_x_pos(original_sequence, k, m, decycler_set, minimizer_mode);
 
     //quick check that we don't have abherrent results
-    assert!(super_kmers_positions.len()==minimizer_values.len(), 
-        "Superkmers and minimizers have different length.");
+    assert!(
+        super_kmers_positions.len() == minimizer_values.len(),
+        "Superkmers and minimizers have different length."
+    );
 
     let mut kmer_number: usize = 0;
     //compute all hashes at once to g faster than computing them 1 by 1
-    for i in 0..super_kmers_positions.len()-1 {
+    for i in 0..super_kmers_positions.len() - 1 {
         //using minimizer hashing for now to be sure its not a source of problems, will see if
         //removing it doesn't break anything later
-        let hashed_minimizer: u64 = xorshift_u64(minimizer_values[i])&(nb_blocks as u64-1);
+        let hashed_minimizer: u64 = xorshift_u64(minimizer_values[i]) & (nb_blocks as u64 - 1);
         if no_bloom {
             //prevent optims
             local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
         } else {
             if l <= 31 {
-                kmer_number = 
-                    handle_super_kmer(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-                    bloom, k, hashed_minimizer, kmer_number,
-                    all_addresses, address_mask, l);
+                kmer_number = handle_super_kmer(
+                    super_kmers_positions[i],
+                    super_kmers_positions[i + 1],
+                    &sequence,
+                    bloom,
+                    k,
+                    hashed_minimizer,
+                    kmer_number,
+                    all_addresses,
+                    address_mask,
+                    l,
+                );
             } else {
-                kmer_number = 
-                    handle_super_kmer_u128(super_kmers_positions[i], super_kmers_positions[i+1], &sequence, 
-                    bloom, k, hashed_minimizer, kmer_number,
-                    all_addresses, address_mask, l);
+                kmer_number = handle_super_kmer_u128(
+                    super_kmers_positions[i],
+                    super_kmers_positions[i + 1],
+                    &sequence,
+                    bloom,
+                    k,
+                    hashed_minimizer,
+                    kmer_number,
+                    all_addresses,
+                    address_mask,
+                    l,
+                );
             }
         }
     }
     //not forgetting the last element of the list
-    let hashed_minimizer: u64 = xorshift_u64(minimizer_values[minimizer_values.len()-1])&(nb_blocks as u64-1);
+    let hashed_minimizer: u64 =
+        xorshift_u64(minimizer_values[minimizer_values.len() - 1]) & (nb_blocks as u64 - 1);
     if no_bloom {
         //prevent optims
         local_kmer_sum = local_kmer_sum.wrapping_add(hashed_minimizer);
     } else {
         if l <= 31 {
-            let _ = 
-                handle_super_kmer(super_kmers_positions[super_kmers_positions.len()-1], 
-                (sequence.len()+1-k as usize) as u32,
-                &sequence, 
-                bloom, k, hashed_minimizer,
-                kmer_number, all_addresses, address_mask, l);
-        } else {
-            let _ = 
-                handle_super_kmer_u128(super_kmers_positions[super_kmers_positions.len()-1], 
-                (sequence.len()+1-k as usize) as u32,
+            let _ = handle_super_kmer(
+                super_kmers_positions[super_kmers_positions.len() - 1],
+                (sequence.len() + 1 - k as usize) as u32,
                 &sequence,
-                bloom, k, hashed_minimizer,
-                kmer_number, all_addresses, address_mask, l);
+                bloom,
+                k,
+                hashed_minimizer,
+                kmer_number,
+                all_addresses,
+                address_mask,
+                l,
+            );
+        } else {
+            let _ = handle_super_kmer_u128(
+                super_kmers_positions[super_kmers_positions.len() - 1],
+                (sequence.len() + 1 - k as usize) as u32,
+                &sequence,
+                bloom,
+                k,
+                hashed_minimizer,
+                kmer_number,
+                all_addresses,
+                address_mask,
+                l,
+            );
         }
     }
 
@@ -828,21 +885,27 @@ fn handle_sequence(
     local_kmer_sum
 }
 
-fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
-    bloom: &BloomFilter, 
-    k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, all_addresses: &mut Vec<usize>, 
-    address_mask: usize, l: u16) -> usize {
+fn handle_super_kmer(
+    start_pos: u32,
+    end_pos: u32,
+    sequence: &PackedSeqVec,
+    bloom: &BloomFilter,
+    k: u16,
+    hashed_minimizer: u64,
+    mut kmer_number: usize,
+    all_addresses: &mut Vec<usize>,
+    address_mask: usize,
+    l: u16,
+) -> usize {
     let smer_count = end_pos as usize + (k - l) as usize - start_pos as usize;
     let required_addresses = smer_count * bloom.n_hashes;
     if all_addresses.len() < required_addresses {
         all_addresses.resize(required_addresses, 0);
     }
     let mut last_relevant_index: usize = 0;
-    for j in (start_pos as usize)..(end_pos as usize) + (k-l) as usize{
-        let smer: PackedSeq = sequence.slice(j..j+l as usize);
+    for j in (start_pos as usize)..(end_pos as usize) + (k - l) as usize {
+        let smer: PackedSeq = sequence.slice(j..j + l as usize);
         let mut hash: u64 = xorshift_u64(smer.as_u64());
-
 
         for _i in 0..bloom.n_hashes {
             let address = hash as usize & address_mask;
@@ -851,33 +914,41 @@ fn handle_super_kmer(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
             hash = xorshift_u64(hash);
         }
 
-        kmer_number+=1;
-
+        kmer_number += 1;
     }
     let relevant_addresses = &mut all_addresses[..last_relevant_index];
-    let blocknum: usize = (hashed_minimizer as usize)&1023;
-    let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
+    let blocknum: usize = (hashed_minimizer as usize) & 1023;
+    let subblocknum: usize = ((hashed_minimizer as usize) >> 10) & ((bloom.nb_blocks >> 10) - 1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
     for address in relevant_addresses {
-            if !block.get(subblocknum, *address) {
-                block.set(subblocknum, *address, true);
-            }
+        if !block.get(subblocknum, *address) {
+            block.set(subblocknum, *address, true);
+        }
     }
     drop(block);
     kmer_number
 }
 
-fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
-    bloom: &BloomFilter, 
-    k: u16, hashed_minimizer: u64, 
-    mut kmer_number: usize, _all_addresses: &mut Vec<usize>, 
-    address_mask: usize, l: u16) -> usize {
+fn handle_super_kmer_u128(
+    start_pos: u32,
+    end_pos: u32,
+    sequence: &PackedSeqVec,
+    bloom: &BloomFilter,
+    k: u16,
+    hashed_minimizer: u64,
+    mut kmer_number: usize,
+    _all_addresses: &mut Vec<usize>,
+    address_mask: usize,
+    l: u16,
+) -> usize {
     let smer_count = end_pos as usize + (k - l) as usize - start_pos as usize;
-    let blocknum: usize = (hashed_minimizer as usize)&1023;
-    let subblocknum: usize = ((hashed_minimizer as usize)>>10)&((bloom.nb_blocks>>10)-1);
+    let blocknum: usize = (hashed_minimizer as usize) & 1023;
+    let subblocknum: usize = ((hashed_minimizer as usize) >> 10) & ((bloom.nb_blocks >> 10) - 1);
     let mut block = bloom.filter[blocknum].lock().unwrap();
 
-    let mut current_smer = sequence.slice(start_pos as usize..start_pos as usize + l as usize).as_u128();
+    let mut current_smer = sequence
+        .slice(start_pos as usize..start_pos as usize + l as usize)
+        .as_u128();
     for offset in 0..smer_count {
         let mut hash = hash_u128_to_u64(current_smer);
         for _ in 0..bloom.n_hashes {
@@ -890,40 +961,42 @@ fn handle_super_kmer_u128(start_pos: u32, end_pos: u32, sequence: &PackedSeqVec,
 
         kmer_number += 1;
         if offset + 1 < smer_count {
-            let next_base = sequence.as_slice().get(start_pos as usize + offset + l as usize);
+            let next_base = sequence
+                .as_slice()
+                .get(start_pos as usize + offset + l as usize);
             current_smer = roll_u128_kmer(current_smer, next_base, l);
         }
     }
     kmer_number
 }
 
-
 fn write_auto_bench_stdout(
-    no_bloom : bool, 
+    no_bloom: bool,
     bloom: FrozenBloomFilter,
     nb_blocks: usize,
     block_size: usize,
     false_positive_rate: f64,
     false_negative_rate: f64,
     duration_overhead_decycling: Duration,
-    ) {
+) {
     let mut print_string = String::new();
     //writes every number looked for by the benchmark programm in a single line
     //also does all the counting
     if !no_bloom {
-        let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) = bloom.count_it_all();
-        let n_z_bloom_rate: f64 = n_z_bloom as f64/nb_blocks as f64;
-        let max_bloom_rate: f64 = max_bloom as f64/block_size as f64;
-        let median_bloom_rate: f64 = median_bloom as f64/block_size as f64;
-        let average_bloom_rate: f64 = average_bloom as f64/block_size as f64;
-        let overfilled_rate: f64 = fill_counter as f64/n_z_bloom as f64;
+        let (n_z_bloom, max_bloom, median_bloom, average_bloom, fill_counter) =
+            bloom.count_it_all();
+        let n_z_bloom_rate: f64 = n_z_bloom as f64 / nb_blocks as f64;
+        let max_bloom_rate: f64 = max_bloom as f64 / block_size as f64;
+        let median_bloom_rate: f64 = median_bloom as f64 / block_size as f64;
+        let average_bloom_rate: f64 = average_bloom as f64 / block_size as f64;
+        let overfilled_rate: f64 = fill_counter as f64 / n_z_bloom as f64;
 
-        print_string += 
-            &format!("{n_z_bloom_rate}|{max_bloom_rate}|{average_bloom_rate}|{median_bloom_rate}|{overfilled_rate}");
+        print_string += &format!(
+            "{n_z_bloom_rate}|{max_bloom_rate}|{average_bloom_rate}|{median_bloom_rate}|{overfilled_rate}"
+        );
     } else {
         print_string += &format!("0|0|0|0");
     }
-
 
     //false negatives and false potitives rates
     print_string += &format!("|{:.3}|{:.3}", false_positive_rate, false_negative_rate);
@@ -937,11 +1010,11 @@ fn write_auto_bench_stdout(
 #[cfg(test)]
 mod tests {
     use super::{
-        PhaseStats, auto_size_bits_from_ram_gb, handle_sequence, handle_super_kmer,
+        BloomFilter, Decycler, MinimizerMode, PhaseStats, auto_size_bits_from_ram_gb,
+        default_smer_length, estimate_input_cardinality, handle_sequence, handle_super_kmer,
         handle_super_kmer_u128, infer_block_size_bits, max_superkmer_address_capacity,
-        optimal_hash_count, optimal_smer_length, default_smer_length, resolve_input_path,
-        split_sequence_for_parallelism, BloomFilter, Decycler,
-        estimate_input_cardinality, MinimizerMode,
+        optimal_hash_count, optimal_smer_length, resolve_input_path,
+        split_sequence_for_parallelism,
     };
     use packed_seq::{PackedSeqVec, SeqVec};
     use std::fs;
@@ -954,7 +1027,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        path.push(format!("bloomybloom_main_{name}_{unique}_{}", std::process::id()));
+        path.push(format!(
+            "bloomybloom_main_{name}_{unique}_{}",
+            std::process::id()
+        ));
         path
     }
 
@@ -1043,9 +1119,8 @@ mod tests {
     fn handle_sequence_populates_bloom_for_u128_queries() {
         let bloom = build_bloom(40);
         let decycler = build_decycler(3);
-        let sequence = PackedSeqVec::from_ascii(
-            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
-        );
+        let sequence =
+            PackedSeqVec::from_ascii(b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT");
         let mut addresses = vec![0; 256];
 
         let _ = handle_sequence(
@@ -1073,19 +1148,40 @@ mod tests {
         let sequence = PackedSeqVec::from_ascii(b"ACGTACGT");
         let mut addresses = vec![0; 64];
 
-        let count = handle_super_kmer(0, 2, &sequence, &bloom, 5, 0, 7, &mut addresses, (1 << 10) - 1, 3);
+        let count = handle_super_kmer(
+            0,
+            2,
+            &sequence,
+            &bloom,
+            5,
+            0,
+            7,
+            &mut addresses,
+            (1 << 10) - 1,
+            3,
+        );
         assert_eq!(count, 11);
     }
 
     #[test]
     fn handle_super_kmer_u128_returns_updated_counter() {
         let bloom = build_bloom(40);
-        let sequence = PackedSeqVec::from_ascii(
-            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"
-        );
+        let sequence =
+            PackedSeqVec::from_ascii(b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT");
         let mut addresses = vec![0; 256];
 
-        let count = handle_super_kmer_u128(0, 2, &sequence, &bloom, 40, 0, 5, &mut addresses, (1 << 10) - 1, 32);
+        let count = handle_super_kmer_u128(
+            0,
+            2,
+            &sequence,
+            &bloom,
+            40,
+            0,
+            5,
+            &mut addresses,
+            (1 << 10) - 1,
+            32,
+        );
         assert_eq!(count, 15);
     }
 
@@ -1130,11 +1226,7 @@ mod tests {
         let chunks = split_sequence_for_parallelism(b"ACGTACGTAC".to_vec(), 4, 3, Some(3));
         assert_eq!(
             chunks,
-            vec![
-                b"ACGTAC".to_vec(),
-                b"TACGTA".to_vec(),
-                b"GTAC".to_vec(),
-            ]
+            vec![b"ACGTAC".to_vec(), b"TACGTA".to_vec(), b"GTAC".to_vec(),]
         );
     }
 

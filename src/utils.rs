@@ -5,9 +5,9 @@
 
 ///hashing function for u64 using xorshift
 pub fn xorshift_u64(mut x: u64) -> u64 {
-    x ^= x<<13;
-    x ^= x>>7;
-    x ^= x<<17;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
     x
 }
 
@@ -45,7 +45,9 @@ pub fn xorshift_u128(mut x: u128) -> u128 {
 pub fn sum_vec_bool(boolean_vector: &Vec<bool>) -> usize {
     let mut counter: usize = 0;
     for val in boolean_vector {
-        if *val {counter += 1};
+        if *val {
+            counter += 1
+        };
     }
     counter
 }
@@ -99,9 +101,13 @@ mod tests {
 
     #[test]
     fn roll_u128_kmer_drops_first_base_and_appends_new_one() {
-        let start = packed_seq::PackedSeqVec::from_ascii(b"ACGT").as_slice().as_u128();
+        let start = packed_seq::PackedSeqVec::from_ascii(b"ACGT")
+            .as_slice()
+            .as_u128();
         let rolled = roll_u128_kmer(start, 0, 4);
-        let expected = packed_seq::PackedSeqVec::from_ascii(b"CGTA").as_slice().as_u128();
+        let expected = packed_seq::PackedSeqVec::from_ascii(b"CGTA")
+            .as_slice()
+            .as_u128();
         assert_eq!(rolled, expected);
     }
 

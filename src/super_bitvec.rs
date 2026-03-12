@@ -1,7 +1,7 @@
+use std::fmt;
+use std::fmt::Display;
 ///module taht implements my super u64 bitvecs
 use std::fmt::Error;
-use std::fmt::Display;
-use std::fmt;
 
 pub struct SuperBitVec {
     vector: Vec<u64>,
@@ -9,16 +9,16 @@ pub struct SuperBitVec {
 }
 
 impl SuperBitVec {
-
     ///creates a new superbitvec, filled with 0's, "makes the actual complete structure"
-    pub fn new(size : usize) -> Self {
-        let vec_size: usize = if size%64==0 {size/64} else {size/64+1};
+    pub fn new(size: usize) -> Self {
+        let vec_size: usize = if size % 64 == 0 {
+            size / 64
+        } else {
+            size / 64 + 1
+        };
         let vector: Vec<u64> = vec![0; vec_size];
-        
-        Self {
-            vector,
-            size,
-        }
+
+        Self { vector, size }
     }
 
     //sets the bit at "index" address to value
@@ -29,10 +29,10 @@ impl SuperBitVec {
         }
 
         //compute which bit to insert
-        let block_num: usize = address>>6;
-        let mut to_insert: u64 = 1<<(63-(address&63)) as u64; //trust the calculation
+        let block_num: usize = address >> 6;
+        let mut to_insert: u64 = 1 << (63 - (address & 63)) as u64; //trust the calculation
         if value == false {
-            to_insert = u64::MAX-to_insert;
+            to_insert = u64::MAX - to_insert;
         }
 
         //now performing the insertion with an atomic or
@@ -45,8 +45,12 @@ impl SuperBitVec {
 
     ///getter for a certain bit
     pub fn get(&self, address: usize) -> bool {
-        let block = self.vector[address>>6];
-        let boolean: bool = if (block>>(63-(address&63)))&1 == 1 {true} else {false};
+        let block = self.vector[address >> 6];
+        let boolean: bool = if (block >> (63 - (address & 63))) & 1 == 1 {
+            true
+        } else {
+            false
+        };
         boolean
     }
 
@@ -56,24 +60,33 @@ impl SuperBitVec {
     }
 }
 
-
 impl Display for SuperBitVec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), Error> {
-
         //is meant for some debugging on smaller examples, so we have a max threshhold
         let write_threshhold: usize = 8192;
         if self.size > write_threshhold {
-            return write!(f, "SuperBitVec of length over {write_threshhold} wasn't written.");
+            return write!(
+                f,
+                "SuperBitVec of length over {write_threshhold} wasn't written."
+            );
         }
 
         //special case for the first block depends on the actual length of the SuperBitVec
         let mut to_write = String::new();
 
-        let to_push: usize = if self.size&63==0 {0} else {64-(self.size&63)};
+        let to_push: usize = if self.size & 63 == 0 {
+            0
+        } else {
+            64 - (self.size & 63)
+        };
         let first_block = self.vector[0] >> to_push;
-        to_write += &format!("{:0width$b}", first_block, width = 64-to_push); 
+        to_write += &format!("{:0width$b}", first_block, width = 64 - to_push);
 
-        let last_block_number: usize = if self.size&63==0 {self.size>>6} else {(self.size>>6)+1};
+        let last_block_number: usize = if self.size & 63 == 0 {
+            self.size >> 6
+        } else {
+            (self.size >> 6) + 1
+        };
         for i in 1..(last_block_number) {
             to_write += &format!("{:064b}", self.vector[i]);
         }
@@ -85,10 +98,7 @@ impl Clone for SuperBitVec {
     fn clone(&self) -> Self {
         let vector = self.vector.clone();
         let size = self.size;
-        Self {
-            vector,
-            size,
-        }
+        Self { vector, size }
     }
 }
 

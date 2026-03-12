@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use packed_seq::{PackedSeq, Seq};
 
 const CYCLER_BLOCK_SIZE: usize = 512; //just always keep it a power of 2
-const CYCLER_BLOCK_MASK_MULT_64: usize = 64*CYCLER_BLOCK_SIZE-1;
+const CYCLER_BLOCK_MASK_MULT_64: usize = 64 * CYCLER_BLOCK_SIZE - 1;
 const CYCLER_BLOCK_SHIFTER: usize = 15;
 
 //const CYCLER_BLOCK_SIZE: usize = 1; //just always keep it a power of 2
@@ -16,30 +16,29 @@ const CYCLER_BLOCK_SHIFTER: usize = 15;
 pub struct Decycler {
     pub m: u16, //minimizer length
     pub direct_list: Vec<Vec<u64>>, //stores in "booleans" if a string is a direct decycling minimizer
-                                //based on its address
-    //indirect_lit, to add
+                                    //based on its address
+                                    //indirect_lit, to add
 }
 
 impl Decycler {
-
     ///initialization, creating enough space for all the minimizers
     pub fn new(m: u16) -> Self {
         let block_count = usize::max(1, (1usize << (2 * m as usize)) >> CYCLER_BLOCK_SHIFTER);
         let direct_list: Vec<Vec<u64>> = vec![vec![0; CYCLER_BLOCK_SIZE]; block_count];
         init_vec_ci(m);
-        Self {
-            m,
-            direct_list,
-        }
+        Self { m, direct_list }
     }
 
     ///computes the belonging (or not) of all the kmers
     pub fn compute_blocks(&mut self) {
         let vec_ci: Vec<f64> = init_vec_ci(self.m);
-        self.direct_list.par_iter_mut().enumerate().for_each(|(i, mut block)| {
-            //println!("ca compute un block en léééégende");
-            compute_block(i, &mut block, self.m, &vec_ci);
-        })
+        self.direct_list
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, mut block)| {
+                //println!("ca compute un block en léééégende");
+                compute_block(i, &mut block, self.m, &vec_ci);
+            })
     }
 
     pub fn lookup(&self, minimizer: PackedSeq) -> bool {
@@ -55,22 +54,25 @@ impl Decycler {
         //lookup the corresponding u64
         //let integer_adress: usize = (address%(CYCLER_BLOCK_SIZE*64))/64;
         //REMOVED MODULO
-        let integer_adress: usize = (address&(CYCLER_BLOCK_MASK_MULT_64))>>6;
+        let integer_adress: usize = (address & (CYCLER_BLOCK_MASK_MULT_64)) >> 6;
         let integer: u64 = block[integer_adress];
 
         //reading the correct bit using bitshifting
         //let boolean: bool = if (integer>>(63-address%64))%2 == 1 {true} else {false};
         //REMOVED MODULO
-        let boolean: bool = if (integer>>(63-(address&63)))&1 == 1 {true} else {false};
+        let boolean: bool = if (integer >> (63 - (address & 63))) & 1 == 1 {
+            true
+        } else {
+            false
+        };
 
         //return
         boolean
     }
 }
 
-
 fn compute_block(i: usize, block: &mut Vec<u64>, m: u16, vec_ci: &Vec<f64>) {
-    let mut kmer: u64 = (i*CYCLER_BLOCK_SIZE*64) as u64;
+    let mut kmer: u64 = (i * CYCLER_BLOCK_SIZE * 64) as u64;
 
     for j in 0..CYCLER_BLOCK_SIZE {
         let mut to_insert: u64 = 0;
@@ -78,10 +80,10 @@ fn compute_block(i: usize, block: &mut Vec<u64>, m: u16, vec_ci: &Vec<f64>) {
             //let is_decycler: bool = compute_membership(4_u64.pow(m as u32)-kmer, m, vec_ci);
             let is_decycler: bool = compute_membership(kmer, m, vec_ci);
             if is_decycler {
-                to_insert += 1<<(63-k);
+                to_insert += 1 << (63 - k);
             }
 
-            kmer +=1;
+            kmer += 1;
         }
         block[j] = to_insert;
     }
@@ -93,49 +95,58 @@ fn compute_block(i: usize, block: &mut Vec<u64>, m: u16, vec_ci: &Vec<f64>) {
 ///Orenstein; page 3
 pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
     let epsilon: f64 = 0.00001;
-    let mut imaginary_x: f64 = 0.0; 
+    let mut imaginary_x: f64 = 0.0;
     let mut imaginary_x_prime: f64 = 0.0;
     for i in 0..m {
         //let x_i: u64 = (kmer>>(2*i))%4;
         //REMOVED MODULO
-        let x_i: u64 = (kmer>>(2*i))&3;
-        imaginary_x += vec_ci[i as usize]*x_i as f64;
-        let i_prime: usize = if i<m-1 {i as usize+1} else {0};
-        imaginary_x_prime += vec_ci[i_prime]*x_i as f64;
+        let x_i: u64 = (kmer >> (2 * i)) & 3;
+        imaginary_x += vec_ci[i as usize] * x_i as f64;
+        let i_prime: usize = if i < m - 1 { i as usize + 1 } else { 0 };
+        imaginary_x_prime += vec_ci[i_prime] * x_i as f64;
     }
     //println!("partie imaginaire : {imaginary_x}, du précédent : {imaginary_x_prime}");
 
     if imaginary_x > epsilon {
         if imaginary_x_prime <= epsilon {
-            return true
+            return true;
         }
-    }else if imaginary_x >= -epsilon && imaginary_x <= epsilon { //testing equality actually
+    } else if imaginary_x >= -epsilon && imaginary_x <= epsilon {
+        //testing equality actually
         if imaginary_x_prime >= -epsilon && imaginary_x_prime <= epsilon {
             let mut k: u16 = 0;
-            for l in 0..2*m {
+            for l in 0..2 * m {
                 //REMOVED MODULO
-                let x_l_mod_m: u64 = (kmer>>(2*(m-(l%m)-1)))&3;
-                let x_k: u64 = (kmer>>(2*(m-k-1)))&3;
-                if x_l_mod_m < x_k {return false};
-                if x_l_mod_m > x_k {k = 0} else {k += 1};
-                if (l >= m-1) && (k%m == 0) {return true};
+                let x_l_mod_m: u64 = (kmer >> (2 * (m - (l % m) - 1))) & 3;
+                let x_k: u64 = (kmer >> (2 * (m - k - 1))) & 3;
+                if x_l_mod_m < x_k {
+                    return false;
+                };
+                if x_l_mod_m > x_k {
+                    k = 0
+                } else {
+                    k += 1
+                };
+                if (l >= m - 1) && (k % m == 0) {
+                    return true;
+                };
             }
         }
     }
-    return false
+    return false;
 }
 
 pub fn init_vec_ci(m: u16) -> Vec<f64> {
     let mut vec_ci: Vec<f64> = Vec::with_capacity(m as usize);
     for i in 0..m {
-        vec_ci.push((2.0*std::f64::consts::PI*i as f64/m as f64).sin());
+        vec_ci.push((2.0 * std::f64::consts::PI * i as f64 / m as f64).sin());
     }
     vec_ci
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_membership, init_vec_ci, Decycler};
+    use super::{Decycler, compute_membership, init_vec_ci};
     use packed_seq::{PackedSeqVec, Seq, SeqVec};
 
     fn decode_kmer(mut encoded: u64, m: u16) -> String {

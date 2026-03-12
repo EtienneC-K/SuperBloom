@@ -1,11 +1,10 @@
+use needletail::FastxReader;
+use packed_seq::{PackedSeqVec, SeqVec};
 ///module to read an inputed fasta file, and maybe later a .txt file of file
 ///output will always be some compressed sequences (packed_seq) from imartayan
-
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
-use packed_seq::{PackedSeqVec, SeqVec};
-use needletail::FastxReader;
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
 pub fn _read_fasta(fasta_file: String) -> PackedSeqVec {
@@ -16,7 +15,7 @@ pub fn _read_fasta(fasta_file: String) -> PackedSeqVec {
             let unwrapped_line = line.expect("Problem reading a FASTA");
             let line_bytes = unwrapped_line.as_bytes();
             //filter out all the comments
-            if line_bytes.len() >0 && line_bytes[0] != b'>' && line_bytes[0] != b';' {
+            if line_bytes.len() > 0 && line_bytes[0] != b'>' && line_bytes[0] != b';' {
                 full_ascii += &unwrapped_line;
             }
         }
@@ -42,7 +41,9 @@ pub fn _read_fof(fof_file: String) -> Vec<String> {
 
 ///classic function to simply read any file line by line efficiently
 pub fn _read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-where P: AsRef<Path>, {
+where
+    P: AsRef<Path>,
+{
     let file = File::open(filename)?;
     Ok(io::BufReader::new(file).lines())
 }
@@ -89,7 +90,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        path.push(format!("bloomybloom_{name}_{unique}_{}", std::process::id()));
+        path.push(format!(
+            "bloomybloom_{name}_{unique}_{}",
+            std::process::id()
+        ));
         path
     }
 
@@ -101,7 +105,12 @@ mod tests {
         let packed = _read_fasta(path.to_string_lossy().into_owned());
 
         assert_eq!(packed.len(), 8);
-        assert_eq!(packed.as_slice().as_u64(), packed_seq::PackedSeqVec::from_ascii(b"ACGTTGCA").as_slice().as_u64());
+        assert_eq!(
+            packed.as_slice().as_u64(),
+            packed_seq::PackedSeqVec::from_ascii(b"ACGTTGCA")
+                .as_slice()
+                .as_u64()
+        );
 
         fs::remove_file(path).unwrap();
     }
@@ -111,7 +120,11 @@ mod tests {
         let fasta_a = temp_path("a.fasta");
         let fasta_b = temp_path("b.fasta");
         let fof = temp_path("files.txt");
-        fs::write(&fof, format!("{}\n{}\n", fasta_a.display(), fasta_b.display())).unwrap();
+        fs::write(
+            &fof,
+            format!("{}\n{}\n", fasta_a.display(), fasta_b.display()),
+        )
+        .unwrap();
 
         let files = _read_fof(fof.to_string_lossy().into_owned());
         assert_eq!(files.len(), 2);

@@ -1,6 +1,5 @@
 /// Utilities to compute super-kmer boundaries and minimizer values for different
 /// grouping orders.
-
 use crate::decyclers::Decycler;
 
 use std::cell::RefCell;
@@ -65,7 +64,8 @@ fn build_superkmers_from_positions(
         if minimizer_positions[i] != last_minimizer_pos {
             last_minimizer_pos = minimizer_positions[i];
             super_kmers.push(first_superkmer_addr);
-            minimizer_vals.push(minimizer_hashes[minimizer_positions[first_superkmer_addr as usize]]);
+            minimizer_vals
+                .push(minimizer_hashes[minimizer_positions[first_superkmer_addr as usize]]);
             first_superkmer_addr = i as u32;
         }
     }
@@ -73,7 +73,11 @@ fn build_superkmers_from_positions(
     super_kmers.push(first_superkmer_addr);
     minimizer_vals.push(minimizer_hashes[minimizer_positions[first_superkmer_addr as usize]]);
 
-    debug_assert!(super_kmers.iter().all(|&p| p < (packed_seq.len() + 1 - k as usize) as u32));
+    debug_assert!(
+        super_kmers
+            .iter()
+            .all(|&p| p < (packed_seq.len() + 1 - k as usize) as u32)
+    );
     debug_assert_eq!(super_kmers.len(), minimizer_vals.len());
     debug_assert!(m <= k);
     (super_kmers, minimizer_vals)
@@ -178,7 +182,11 @@ pub fn open_closed_mins_x_pos(
             }
         }
 
-        let min_t_pos = inner_minima.front().copied().expect("non-empty inner window") - i;
+        let min_t_pos = inner_minima
+            .front()
+            .copied()
+            .expect("non-empty inner window")
+            - i;
         keys.push(OpenClosedKey {
             priority: open_closed_priority(m, t, min_t_pos),
             hash: m_hashes[i],
@@ -296,8 +304,8 @@ fn mins_from_kmer<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        decycling_mins_x_pos, minimizers_x_positions, mins_from_kmer, open_closed_mins_x_pos,
-        open_closed_priority, selected_mins_x_pos, MinimizerMode,
+        MinimizerMode, decycling_mins_x_pos, minimizers_x_positions, mins_from_kmer,
+        open_closed_mins_x_pos, open_closed_priority, selected_mins_x_pos,
     };
     use crate::decyclers::Decycler;
     use packed_seq::{PackedSeqVec, Seq, SeqVec};
@@ -348,8 +356,13 @@ mod tests {
     fn selected_mins_dispatches_open_closed() {
         let sequence = PackedSeqVec::from_ascii(b"ACGTACGTAC");
         let decycler = Decycler::new(1);
-        let (super_kmers, minimizers, _) =
-            selected_mins_x_pos(sequence, 5, 3, &decycler, MinimizerMode::OpenClosed { t: 2 });
+        let (super_kmers, minimizers, _) = selected_mins_x_pos(
+            sequence,
+            5,
+            3,
+            &decycler,
+            MinimizerMode::OpenClosed { t: 2 },
+        );
 
         assert!(!super_kmers.is_empty());
         assert_eq!(super_kmers.len(), minimizers.len());
@@ -452,8 +465,7 @@ mod tests {
         let mut decycler = Decycler::new(3);
         decycler.compute_blocks();
         let sequence = PackedSeqVec::from_ascii(b"ACGTACGTACGT");
-        let (super_kmers, minimizers, original) =
-            decycling_mins_x_pos(sequence, 5, 3, &decycler);
+        let (super_kmers, minimizers, original) = decycling_mins_x_pos(sequence, 5, 3, &decycler);
 
         assert_eq!(super_kmers.len(), minimizers.len());
         for minimizer in minimizers {
