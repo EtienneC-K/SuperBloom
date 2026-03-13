@@ -4,11 +4,18 @@
 //use packed_seq::{PackedSeq, Seq};
 
 ///hashing function for u64 using xorshift
+//pub fn xorshift_u64(mut x: u64) -> u64 {
+//    x ^= x << 13;
+//    x ^= x >> 7;
+//    x ^= x << 17;
+//    x
+//}
+
 pub fn xorshift_u64(mut x: u64) -> u64 {
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    x
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }
 
 #[inline(always)]
