@@ -17,8 +17,8 @@ except ImportError as exc:
 BENCHMARK_NAME = "block_size_exponent"
 HASH_COUNT = 3
 K_VALUE = 31
-M_VALUE = 13
-S_VALUE = 28
+M_VALUE = 21
+S_VALUE = 31
 SIZE_EXPONENT_VALUES = [33, 34, 35, 36, 37, 38] #TODO not forget to change it for the bigger machine
 BLOCK_SIZE_EXPONENT = 13
 THREADS = 16 #TODO not forget to change it for the bigger machine

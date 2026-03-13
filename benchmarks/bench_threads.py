@@ -17,6 +17,8 @@ except ImportError as exc:
 BENCHMARK_NAME = "bench_threads"
 THREAD_VALUES = [1, 2, 4, 8, 16] #TODO: change it for actual bench
 K_VALUE = 31
+S_VALUE = 31
+M_VALUE =21
 RAM_GB = 32 #TODO: change it for actual bench
 REPEATS = 1
 BUILD_FIRST = True
@@ -83,6 +85,10 @@ def build_command(index_file: str, query_file: str, threads: int) -> list[str]:
         str(threads),
         "-k",
         str(K_VALUE),
+        "-m",
+        str(M_VALUE),
+        "-s",
+        str(S_VALUE),
     ]
     if USE_INDEXED_FILE_FLAG:
         command.extend(["--indexed-file", str(Path(index_file).expanduser())])
@@ -168,6 +174,8 @@ def main() -> None:
             "index_file": str(Path(args.index_file).expanduser()),
             "query_file": str(Path(args.query_file).expanduser()),
             "k": K_VALUE,
+            "m": M_VALUE,
+            "s": S_VALUE,
             "ram_gb": RAM_GB,
             "threads": threads,
             "repeats": REPEATS,

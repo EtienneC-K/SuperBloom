@@ -15,9 +15,9 @@ except ImportError as exc:
 
 
 BENCHMARK_NAME = "bench_hashes"
-HASH_COUNTS = [1, 2, 3, 4]
+HASH_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8]
 K_VALUE = 31
-M_VALUE = 13
+M_VALUE = 21
 S_VALUE = 28
 SIZE_EXPONENT = 38 #TODO not forget to change it for the bigger machine
 BLOCK_SIZE_EXPONENT = 13
