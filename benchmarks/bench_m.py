@@ -19,7 +19,7 @@ THREAD_VALUE = 16
 K_VALUE = 31
 BLOCK_SIZE = 13
 RAM_GB = 32
-M_VALUES = [7, 11, 15, 19, 23, 27]
+M_VALUES = [7, 11, 15, 19, 23]
 REPEATS = 1
 BUILD_FIRST = True
 USE_INDEXED_FILE_FLAG = False
@@ -186,6 +186,7 @@ def main() -> None:
 
     rows: list[dict[str, object]] = []
     for m in M_VALUES:
+        print(f"current minimizer {m}")
         metrics_list = [
             run_bloom(root, build_command(args.index_file, args.query_file, m))
             for _ in range(REPEATS)
