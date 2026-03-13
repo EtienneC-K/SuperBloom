@@ -20,7 +20,7 @@ K_VALUE = 31
 S_VALUES = [20, 26, 28, 30, 31]
 H_VALUES = [1, 2, 4, 6, 12]
 BLOCK_SIZE = 13
-RAM_GB = 32 #TODO: put correct value for actual bench
+RAM_GB = 2 #TODO: put correct value for actual bench
 M_VALUE = 13
 REPEATS = 1
 BUILD_FIRST = True
@@ -28,7 +28,8 @@ USE_INDEXED_FILE_FLAG = False
 EXTRA_ARGS: list[str] = []
 
 METRIC_PATTERNS = {
-    "ffp": r"false positive rate : ([0-9eE+.\-]+)",
+    "queried": r"Number of kmer queried : ([0-9eE+.\-]+)",
+    "positives": r"Number of positives : ([0-9eE+.\-]+)",
 }
 
 
@@ -121,6 +122,8 @@ def write_tsv(rows: list[dict[str, object]], output_path: Path) -> None:
         "repeats",
         "m",
         "ffp",
+        "queried",
+        "positives",
         "s",
         "n-hashes",
     ]
@@ -132,13 +135,16 @@ def write_tsv(rows: list[dict[str, object]], output_path: Path) -> None:
 
 def plot_rows(rows: list[dict[str, object]], output_path: Path) -> None:
     x_values = [int(row["s"]) for row in rows]
-    false_positives = [float(row["ffp"]) for row in rows]
+    queried = [float(row["queried"]) for row in rows]
+    positives = [float(row["positives"]) for row in rows]
+    ffp = [positives[i]/queried[i] for i in range(len(queried))]
+
 
     fig, axes = plt.subplots(1, 1, figsize=(12, 5), sharex=True)
 
-    axes.plot(x_values, false_positives, marker="o", label="query wall")
+    axes.plot(x_values, ffp, marker="o", label="friendly false positives")
     axes.set_title("False positve rates")
-    axes.set_xlabel("m")
+    axes.set_xlabel("s")
     axes.set_ylabel("FFP rate")
     axes.grid(True, alpha=0.3)
     axes.legend()
