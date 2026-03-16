@@ -1,6 +1,5 @@
-use bloomybloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
+use bloomybloom::{SuperBloom, SuperBloomConfig};
 use needletail::parse_fastx_file;
-use rayon::ThreadPoolBuilder;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
@@ -22,34 +21,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("===========================");
     println!("Dataset: data/ecoli.fa.zst (index + query source)");
 
-    let available_threads = std::thread::available_parallelism()
-        .map(|threads| threads.get())
-        .unwrap_or(8);
-    let rayon_threads = available_threads.max(8);
-    let _ = ThreadPoolBuilder::new()
-        .num_threads(rayon_threads)
-        .build_global();
-    println!("Rayon thread pool configured with {rayon_threads} threads.");
-
- 
-    let config = SuperBloomConfig {
-        k: 31,
-        m: 21,
-        s: 27,
-        n_hashes: 4,
-        size_exponent: 35,
-        block_size_exponent: 13,
-        minimizer_mode: MinimizerMode::Simd,
-    };
+    let config = SuperBloomConfig::default();
     let index_fasta = "data/ecoli.fa.zst";
     let query_fasta = "data/ecoli.fa.zst";
     let query_len = 100usize;
     let query_sequence = first_query_of_len(query_fasta, query_len)?;
 
     println!("\n1) SuperBloom::new(config)");
-    // Create a new mutable index from fully manual parameters.
+    // Create a new mutable index from default crate parameters.
     let mut bloom = SuperBloom::new(config)?;
     println!("   created index with config: {:?}", bloom.config());
+    println!("   indexing thread pool size:  {}", bloom.threads().unwrap_or(1));
 
     println!("\n2) SuperBloom::add_sequence(&[u8])");
     // Add one in-memory DNA sequence.

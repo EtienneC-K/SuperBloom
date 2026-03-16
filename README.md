@@ -52,9 +52,9 @@ The showcase:
 3. inserts all records from `data/ecoli.fa.zst`
 4. queries sequence + FASTA
 5. saves to disk
-6. reload
-7. re-queries
-8. inserts again after queries
+6. reloads
+7. inserts again after loading,
+8. re-queries.
 
 ## Library API 
 
@@ -77,6 +77,8 @@ Main public types:
 - `query_fasta(path) -> Result<QueryReport, SuperBloomError>`
 - `save(path) -> Result<(), SuperBloomError>`
 - `load(path) -> Result<SuperBloom, SuperBloomError>`
+- `set_threads(usize) -> Result<(), SuperBloomError>`
+- `clear_threads()`, `threads()`
 - `inserted_kmers()`, `config()`
 
 
@@ -87,43 +89,40 @@ Main public types:
 use bloomybloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1) Configure geometry and algorithmic parameters explicitly.
-    let config = SuperBloomConfig {
-        k: 31,
-        m: 21,
-        s: 27,                    // findere-like setting: s = k - 4
-        n_hashes: 4,
-        size_exponent: 33,        // 2^33 bits = 1 GiB of RAM for the bit-array
-        block_size_exponent: 13,  // 8192 bits per block
-        minimizer_mode: MinimizerMode::Simd,
-    };
+    // 1) Start from crate defaults.
+    // Defaults are: k=31, m=21, s=27, h=8, size_exponent=35 (4 GiB),
+    // block_size_exponent=9 (512 bits), minimizer_mode=Simd.
+    let config = SuperBloomConfig::default();
 
     // 2) Build mutable index.
     let mut sb = SuperBloom::new(config)?;
 
-    // 3) Insert one in-memory DNA sequence.
+    // 3) Configure threads used by parallel FASTA indexing.
+    sb.set_threads(8)?;
+
+    // 4) Insert one in-memory DNA sequence.
     let added = sb.add_sequence(b"ACGTACGTACGTACGTACGTACGTACGTACGT")?;
     println!("added {added} k-mers from memory");
 
-    // 4) Insert compressed FASTA/FASTQ from disk.
+    // 5) Insert compressed FASTA/FASTQ from disk.
     // needletail auto-detects compression (gz/bz2/xz/zst) and format (FASTA/FASTQ).
     let add_report = sb.add_fasta("data/ecoli.fa.zst")?;
     println!("indexed {} records", add_report.records_indexed);
 
-    // 5) Query from memory (one bool per k-mer window).
+    // 6) Query from memory (one bool per k-mer window).
     let hits = sb.query_sequence(b"ACGTACGTACGTACGTACGTACGTACGTACGT")?;
     let positives = hits.iter().filter(|&&x| x).count();
     println!("memory query positives: {positives}/{}", hits.len());
 
-    // 6) Query an entire FASTA/FASTQ.
+    // 7) Query an entire FASTA/FASTQ.
     let q = sb.query_fasta("data/ecoli.fa.zst")?;
     println!("fasta positives: {}/{}", q.positive_kmers, q.queried_kmers);
 
-    // 7) Save and load.
+    // 8) Save and load.
     sb.save("/tmp/demo.sbf")?;
     let mut sb2 = SuperBloom::load("/tmp/demo.sbf")?;
 
-    // 8) Insert after querying is allowed.
+    // 9) Insert after querying is allowed.
     // Internally, the index auto-thaws/freeze as needed.
     let _ = sb2.add_sequence(b"ACGTACGTACGTACGTACGTACGTACGTACGT")?;
 
@@ -133,31 +132,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Parameter Suggestions
 
-All geometry is explicit in `SuperBloomConfig`.
+All geometry is explicit in `SuperBloomConfig`, and threading is controlled at runtime on `SuperBloom`.
 
-- `k`: k-mer length.
-  - Typical genomic default: `31`.
-- `m`: minimizer length (`m < k`).
-  - Common fast/accurate setting here: `m=21`.
-- `s`: subword length used by findere-like logic (`s <= k`).
-  - Good default: `s = k - 4`.
-  - For `k=31`, use `s=27`.
-- `n_hashes`: number of hash probes per subword.
-  - Typical: `3..8`.
-  - Good default: `4`.
-- `size_exponent`: total bit-array size as `2^size_exponent` bits.
-  - RAM bytes for bit-array = `2^(size_exponent - 3)`.
-  - Examples:
-    - `30` -> 128 MiB
-    - `33` -> 1 GiB
-    - `35` -> 4 GiB
-- `block_size_exponent`: block size as `2^block_size_exponent` bits.
-  - Practical range: `12..14`.
-  - Current showcase: `13` (8192 bits).
-- `minimizer_mode`:
-  - `Simd` for speed-focused default,
-  - `Decycling` for decycler-based selection,
-  - `OpenClosed { t }` for open/closed minimizer strategy.
+### Defaults
+
+`SuperBloomConfig::default()` uses:
+
+- `k = 31`
+- `m = 21`
+- `s = 27` (`k - 4`)
+- `n_hashes = 8`
+- `size_exponent = 35` (4 GiB bit-array)
+- `block_size_exponent = 9` (512-bit blocks)
+- `minimizer_mode = MinimizerMode::Simd`
+
+Runtime defaults:
+
+- `SuperBloom::new(...)` starts with `8` indexing threads for `add_fasta`.
+- Override with `set_threads(n)`, reset with `clear_threads()`.
+
+### Meaning and Influence
+
+- `k` (k-mer length, default `31`)
+  - Higher `k`: usually more specific matching and fewer random hits, but more sensitivity to sequencing errors/variants.
+  - For fixed `m`, higher `k` also tends to create longer super-k-mers, which improves streaming locality and can improve performance.
+  - Lower `k`: more tolerant matching, but higher chance of ambiguous/false matches.
+
+- `m` (minimizer length, default `21`, must satisfy `m < k`)
+  - Higher `m`: generally more minimizer changes and less super-k-mer grouping.
+  - Lower `m`: larger super-k-mer groups and stronger locality, but potentially more collisions/less specificity.
+
+- `s` (findere-like subword length, default `27`)
+  - Rule of thumb: `s = k - 4` is a strong baseline.
+  - Higher `s` (closer to `k`): behavior gets closer to plain k-mer checking.
+  - Lower `s`: stronger false-positive suppression from overlap consistency, but more subword checks per k-mer.
+
+- `n_hashes` (default `8`)
+  - Higher values can reduce false positives up to a point.
+  - Too high harms speed (more hash probes and memory touches).
+  - Too low is faster but generally increases false positives.
+
+- `size_exponent` (total filter bits = `2^size_exponent`, default `35`)
+  - Main memory/accuracy knob.
+  - Higher values use more RAM and usually lower false positives.
+  - Lower values save RAM but raise false positives under the same workload.
+  - RAM bytes used by bit-array: `2^(size_exponent - 3)`.
+  - Examples: `30` = 128 MiB, `33` = 1 GiB, `35` = 4 GiB.
+
+- `block_size_exponent` (block bits = `2^block_size_exponent`, default `9`)
+  - Controls locality granularity.
+  - Smaller blocks improve cache fit/locality but can increase block pressure/collisions.
+  - Larger blocks reduce per-block pressure but may reduce cache efficiency.
+
+- `minimizer_mode` (default `Simd`)
+  - `Simd`: recommended stable mode.
+  - `Decycling` and `OpenClosed { t }`: experimental; library emits a warning when selected.
+
+- `threads` (runtime, default `8`)
+  - Set with `set_threads(n)`.
+  - Controls parallelism for `add_fasta` and `query_fasta`.
+  - More threads usually speed up those operations on larger inputs, up to memory bandwidth / CPU limits.
 
 ## What Happens Under the Hood
 

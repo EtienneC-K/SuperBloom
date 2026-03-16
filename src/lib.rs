@@ -38,16 +38,19 @@ use minimizers::selected_mins_x_pos;
 use needletail::{FastxReader, parse_fastx_file};
 use packed_seq::{PackedSeq, PackedSeqVec, Seq, SeqVec};
 use rayon::prelude::*;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::fs::File;
 use std::fmt::{Display, Formatter};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use std::sync::RwLock;
+use std::sync::{Once, RwLock};
 use utils::{hash_u128_to_u64, sum_vec_bool, xorshift_u64};
 
 const SHARD_COUNT: usize = 1024;
 const SUPERBLOOM_MAGIC: &[u8; 8] = b"SBLOOM01";
 const PAR_BATCH_RECORDS: usize = 256;
+const DEFAULT_THREADS: usize = 8;
+static EXPERIMENTAL_MINIMIZER_WARNING_ONCE: Once = Once::new();
 
 /// Full manual configuration for building a SuperBloom index.
 ///
@@ -69,11 +72,11 @@ impl Default for SuperBloomConfig {
     fn default() -> Self {
         Self {
             k: 31,
-            m: 13,
-            s: 21,
-            n_hashes: 3,
-            size_exponent: 20,
-            block_size_exponent: 10,
+            m: 21,
+            s: 27,
+            n_hashes: 8,
+            size_exponent: 35,
+            block_size_exponent: 9,
             minimizer_mode: MinimizerMode::Simd,
         }
     }
@@ -99,6 +102,7 @@ pub struct QueryReport {
 #[derive(Debug)]
 pub enum SuperBloomError {
     InvalidConfig(String),
+    ThreadPoolBuild(String),
     FastaOpen { path: String, message: String },
     FastaRead { path: String, message: String },
     Serialization { path: String, message: String },
@@ -112,6 +116,9 @@ impl Display for SuperBloomError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             SuperBloomError::InvalidConfig(msg) => write!(f, "invalid config: {msg}"),
+            SuperBloomError::ThreadPoolBuild(msg) => {
+                write!(f, "failed to build rayon thread pool: {msg}")
+            }
             SuperBloomError::FastaOpen { path, message } => {
                 write!(f, "failed to open FASTA/FASTQ '{path}': {message}")
             }
@@ -133,6 +140,19 @@ impl Display for SuperBloomError {
 
 impl std::error::Error for SuperBloomError {}
 
+fn warn_if_experimental_minimizer(mode: MinimizerMode) {
+    if matches!(mode, MinimizerMode::Simd) {
+        return;
+    }
+    EXPERIMENTAL_MINIMIZER_WARNING_ONCE.call_once(|| {
+        eprintln!(
+            "Warning: non-SIMD minimizer modes are experimental (selected: {:?}). \
+             Prefer MinimizerMode::Simd for production workloads.",
+            mode
+        );
+    });
+}
+
 enum BloomState {
     Mutable(BloomFilter),
     Frozen(FrozenBloomFilter),
@@ -147,6 +167,8 @@ pub struct SuperBloom {
     decycler: Decycler,
     config: SuperBloomConfig,
     inserted_kmers: u64,
+    thread_pool: Option<ThreadPool>,
+    thread_count: Option<usize>,
 }
 
 /// Read-only index for querying.
@@ -155,12 +177,15 @@ pub struct FrozenSuperBloom {
     decycler: Decycler,
     config: SuperBloomConfig,
     inserted_kmers: u64,
+    thread_pool: Option<ThreadPool>,
+    thread_count: Option<usize>,
 }
 
 impl SuperBloom {
     /// Create an empty SuperBloom index from a full manual config.
     pub fn new(config: SuperBloomConfig) -> Result<Self, SuperBloomError> {
         let (size_bits, block_size_bits, nb_blocks) = resolve_geometry(config)?;
+        warn_if_experimental_minimizer(config.minimizer_mode);
 
         let mut decycler = if matches!(config.minimizer_mode, MinimizerMode::Decycling) {
             Decycler::new(config.m)
@@ -178,13 +203,49 @@ impl SuperBloom {
             block_size_bits,
             nb_blocks,
         );
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(DEFAULT_THREADS)
+            .build()
+            .map_err(|err| SuperBloomError::ThreadPoolBuild(err.to_string()))?;
 
         Ok(Self {
             state: RwLock::new(Some(BloomState::Mutable(bloom))),
             decycler,
             config,
             inserted_kmers: 0,
+            thread_pool: Some(pool),
+            thread_count: Some(DEFAULT_THREADS),
         })
+    }
+
+    /// Configure a dedicated Rayon thread pool for parallel indexing work.
+    ///
+    /// This controls the thread count used by `add_fasta`.
+    /// New indexes start with a default of 8 threads.
+    pub fn set_threads(&mut self, threads: usize) -> Result<(), SuperBloomError> {
+        if threads == 0 {
+            return Err(SuperBloomError::InvalidConfig(
+                "threads must be >= 1".to_string(),
+            ));
+        }
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .map_err(|err| SuperBloomError::ThreadPoolBuild(err.to_string()))?;
+        self.thread_pool = Some(pool);
+        self.thread_count = Some(threads);
+        Ok(())
+    }
+
+    /// Disable the dedicated thread pool and fall back to Rayon global settings.
+    pub fn clear_threads(&mut self) {
+        self.thread_pool = None;
+        self.thread_count = None;
+    }
+
+    /// Return the user-configured thread count for indexing, if any.
+    pub fn threads(&self) -> Option<usize> {
+        self.thread_count
     }
 
     /// Switch to frozen query mode.
@@ -242,9 +303,7 @@ impl SuperBloom {
             batch.push(record.seq().as_ref().to_vec());
 
             if batch.len() >= PAR_BATCH_RECORDS {
-                let (records_indexed, kmers_added) = self.with_mutable_bloom(|bloom| {
-                    Self::index_batch_parallel(bloom, &self.decycler, self.config, &batch)
-                })?;
+                let (records_indexed, kmers_added) = self.index_batch(&batch)?;
                 report.records_indexed = report.records_indexed.saturating_add(records_indexed);
                 report.kmers_added = report.kmers_added.saturating_add(kmers_added);
                 batch.clear();
@@ -252,15 +311,22 @@ impl SuperBloom {
         }
 
         if !batch.is_empty() {
-            let (records_indexed, kmers_added) = self.with_mutable_bloom(|bloom| {
-                Self::index_batch_parallel(bloom, &self.decycler, self.config, &batch)
-            })?;
+            let (records_indexed, kmers_added) = self.index_batch(&batch)?;
             report.records_indexed = report.records_indexed.saturating_add(records_indexed);
             report.kmers_added = report.kmers_added.saturating_add(kmers_added);
         }
 
         self.inserted_kmers = self.inserted_kmers.saturating_add(report.kmers_added);
         Ok(report)
+    }
+
+    fn index_batch(&self, batch: &[Vec<u8>]) -> Result<(u64, u64), SuperBloomError> {
+        self.with_mutable_bloom(|bloom| match &self.thread_pool {
+            Some(pool) => pool.install(|| {
+                Self::index_batch_parallel(bloom, &self.decycler, self.config, batch)
+            }),
+            None => Self::index_batch_parallel(bloom, &self.decycler, self.config, batch),
+        })
     }
 
     fn index_batch_parallel(
@@ -320,7 +386,13 @@ impl SuperBloom {
     pub fn query_fasta<P: AsRef<Path>>(&self, path: P) -> Result<QueryReport, SuperBloomError> {
         self.ensure_frozen();
         self.with_frozen_bloom(|frozen| {
-            run_query_fasta(frozen, &self.decycler, self.config, path)
+            run_query_fasta(
+                frozen,
+                &self.decycler,
+                self.config,
+                path,
+                self.thread_pool.as_ref(),
+            )
         })
     }
 
@@ -340,6 +412,8 @@ impl SuperBloom {
             decycler: frozen.decycler,
             config: frozen.config,
             inserted_kmers: frozen.inserted_kmers,
+            thread_pool: frozen.thread_pool,
+            thread_count: frozen.thread_count,
         })
     }
 
@@ -401,6 +475,8 @@ impl SuperBloom {
             decycler: self.decycler,
             config: self.config,
             inserted_kmers: self.inserted_kmers,
+            thread_pool: self.thread_pool,
+            thread_count: self.thread_count,
         }
     }
 
@@ -447,6 +523,8 @@ impl FrozenSuperBloom {
             decycler: self.decycler,
             config: self.config,
             inserted_kmers: self.inserted_kmers,
+            thread_pool: self.thread_pool,
+            thread_count: self.thread_count,
         }
     }
 
@@ -483,6 +561,7 @@ impl FrozenSuperBloom {
             path: path_ref.display().to_string(),
             message: err.to_string(),
         })?;
+        warn_if_experimental_minimizer(config.minimizer_mode);
         let mut inserted_buf = [0u8; 8];
         reader
             .read_exact(&mut inserted_buf)
@@ -507,12 +586,18 @@ impl FrozenSuperBloom {
         if matches!(config.minimizer_mode, MinimizerMode::Decycling) {
             decycler.compute_blocks();
         }
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(DEFAULT_THREADS)
+            .build()
+            .map_err(|err| SuperBloomError::ThreadPoolBuild(err.to_string()))?;
 
         Ok(Self {
             bloom,
             decycler,
             config,
             inserted_kmers,
+            thread_pool: Some(pool),
+            thread_count: Some(DEFAULT_THREADS),
         })
     }
 
@@ -525,7 +610,13 @@ impl FrozenSuperBloom {
 
     /// Query every record from a FASTA/FASTQ file.
     pub fn query_fasta<P: AsRef<Path>>(&self, path: P) -> Result<QueryReport, SuperBloomError> {
-        run_query_fasta(&self.bloom, &self.decycler, self.config, path)
+        run_query_fasta(
+            &self.bloom,
+            &self.decycler,
+            self.config,
+            path,
+            self.thread_pool.as_ref(),
+        )
     }
 
     /// Number of k-mers inserted before freezing.
@@ -583,26 +674,83 @@ fn run_query_fasta<P: AsRef<Path>>(
     decycler: &Decycler,
     config: SuperBloomConfig,
     path: P,
+    thread_pool: Option<&ThreadPool>,
 ) -> Result<QueryReport, SuperBloomError> {
     let mut report = QueryReport::default();
     let path_ref = path.as_ref();
     let path_string = path_ref.display().to_string();
     let mut reader = open_fastx_reader(path_ref, &path_string)?;
+    let mut batch: Vec<Vec<u8>> = Vec::with_capacity(PAR_BATCH_RECORDS);
 
     while let Some(record_result) = reader.next() {
         let record = record_result.map_err(|err| SuperBloomError::FastaRead {
             path: path_string.clone(),
             message: err.to_string(),
         })?;
-        report.records_processed = report.records_processed.saturating_add(1);
-        let hits = run_query_sequence(bloom, decycler, config, record.seq().as_ref());
-        report.queried_kmers = report.queried_kmers.saturating_add(hits.len() as u64);
-        report.positive_kmers = report
-            .positive_kmers
-            .saturating_add(sum_vec_bool(&hits) as u64);
+        batch.push(record.seq().as_ref().to_vec());
+        if batch.len() >= PAR_BATCH_RECORDS {
+            let (records_processed, queried_kmers, positive_kmers) =
+                query_batch_stats(bloom, decycler, config, &batch, thread_pool);
+            report.records_processed = report.records_processed.saturating_add(records_processed);
+            report.queried_kmers = report.queried_kmers.saturating_add(queried_kmers);
+            report.positive_kmers = report.positive_kmers.saturating_add(positive_kmers);
+            batch.clear();
+        }
+    }
+
+    if !batch.is_empty() {
+        let (records_processed, queried_kmers, positive_kmers) =
+            query_batch_stats(bloom, decycler, config, &batch, thread_pool);
+        report.records_processed = report.records_processed.saturating_add(records_processed);
+        report.queried_kmers = report.queried_kmers.saturating_add(queried_kmers);
+        report.positive_kmers = report.positive_kmers.saturating_add(positive_kmers);
     }
 
     Ok(report)
+}
+
+fn query_batch_stats(
+    bloom: &FrozenBloomFilter,
+    decycler: &Decycler,
+    config: SuperBloomConfig,
+    batch: &[Vec<u8>],
+    thread_pool: Option<&ThreadPool>,
+) -> (u64, u64, u64) {
+    match thread_pool {
+        Some(pool) => pool.install(|| query_batch_stats_parallel(bloom, decycler, config, batch)),
+        None => query_batch_stats_parallel(bloom, decycler, config, batch),
+    }
+}
+
+fn query_batch_stats_parallel(
+    bloom: &FrozenBloomFilter,
+    decycler: &Decycler,
+    config: SuperBloomConfig,
+    batch: &[Vec<u8>],
+) -> (u64, u64, u64) {
+    batch
+        .par_iter()
+        .fold(
+            || (0u64, 0u64, 0u64),
+            |(records_processed, queried_kmers, positive_kmers), sequence| {
+                let hits = run_query_sequence(bloom, decycler, config, sequence);
+                (
+                    records_processed.saturating_add(1),
+                    queried_kmers.saturating_add(hits.len() as u64),
+                    positive_kmers.saturating_add(sum_vec_bool(&hits) as u64),
+                )
+            },
+        )
+        .reduce(
+            || (0u64, 0u64, 0u64),
+            |(r1, q1, p1), (r2, q2, p2)| {
+                (
+                    r1.saturating_add(r2),
+                    q1.saturating_add(q2),
+                    p1.saturating_add(p2),
+                )
+            },
+        )
 }
 
 fn save_frozen_components<P: AsRef<Path>>(

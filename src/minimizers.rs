@@ -11,8 +11,11 @@ use simd_minimizers::canonical_minimizers;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MinimizerMode {
+    /// Stable and recommended minimizer mode.
     Simd,
+    /// Experimental minimizer mode.
     Decycling,
+    /// Experimental minimizer mode.
     OpenClosed { t: u16 },
 }
 
