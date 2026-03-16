@@ -12,6 +12,7 @@ use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::{IntoParallelRefIterator, ParallelSliceMut};
 use seq_hash::NtHasher;
+use std::io::{self, Read, Write};
 use std::sync::Mutex;
 use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
 
@@ -488,6 +489,62 @@ impl BloomFilter {
 }
 
 impl FrozenBloomFilter {
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        write_usize(writer, self.block_size)?;
+        write_usize(writer, self.nb_blocks)?;
+        write_usize(writer, self.n_hashes)?;
+        write_usize(writer, self.filter.len())?;
+        for shard in &self.filter {
+            write_usize(writer, shard.subblock_count)?;
+            write_usize(writer, shard.words_per_subblock)?;
+            write_usize(writer, shard.block_size)?;
+            write_usize(writer, shard.words.len())?;
+            let words_bytes_len = shard.words.len() * std::mem::size_of::<u64>();
+            let words_bytes = unsafe {
+                std::slice::from_raw_parts(shard.words.as_ptr() as *const u8, words_bytes_len)
+            };
+            writer.write_all(words_bytes)?;
+        }
+        Ok(())
+    }
+
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let block_size = read_usize(reader)?;
+        let nb_blocks = read_usize(reader)?;
+        let n_hashes = read_usize(reader)?;
+        let shard_count = read_usize(reader)?;
+        let mut filter = Vec::with_capacity(shard_count);
+
+        for _ in 0..shard_count {
+            let subblock_count = read_usize(reader)?;
+            let words_per_subblock = read_usize(reader)?;
+            let shard_block_size = read_usize(reader)?;
+            let words_len = read_usize(reader)?;
+
+            let mut words = vec![0u64; words_len];
+            let words_bytes_len = words_len * std::mem::size_of::<u64>();
+            let words_bytes = unsafe {
+                std::slice::from_raw_parts_mut(words.as_mut_ptr() as *mut u8, words_bytes_len)
+            };
+            reader.read_exact(words_bytes)?;
+
+            filter.push(BlockShard {
+                words,
+                subblock_count,
+                words_per_subblock,
+                block_size: shard_block_size,
+            });
+        }
+
+        Ok(Self {
+            filter,
+            block_size,
+            nb_blocks,
+            n_hashes,
+            block_size_mask: block_size - 1,
+        })
+    }
+
     ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
     ///returns : count of non empty blocks, max filled count, median filled count, avrg filled count
     pub fn count_it_all(&self) -> (usize, usize, usize, usize, usize) {
@@ -747,6 +804,19 @@ impl FrozenBloomFilter {
         }
         presence_vec
     }
+}
+
+fn write_usize<W: Write>(writer: &mut W, value: usize) -> io::Result<()> {
+    let converted = u64::try_from(value)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "usize does not fit in u64"))?;
+    writer.write_all(&converted.to_le_bytes())
+}
+
+fn read_usize<R: Read>(reader: &mut R) -> io::Result<usize> {
+    let mut bytes = [0u8; 8];
+    reader.read_exact(&mut bytes)?;
+    usize::try_from(u64::from_le_bytes(bytes))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "u64 does not fit in usize"))
 }
 
 fn check_super_kmer_u128(
