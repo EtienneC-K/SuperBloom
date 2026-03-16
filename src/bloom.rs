@@ -6,15 +6,20 @@ use bit_vec::BitVec;
 use decyclers::Decycler;
 use minimizers::{MinimizerMode, selected_mins_x_pos};
 use packed_seq::{PackedSeq, PackedSeqVec, Seq, SeqVec};
+#[cfg(test)]
 use rand::prelude::*;
 #[cfg(test)]
 use rayon::iter::ParallelBridge;
+#[cfg(test)]
 use rayon::iter::ParallelIterator;
+#[cfg(test)]
 use rayon::prelude::{IntoParallelRefIterator, ParallelSliceMut};
 use seq_hash::NtHasher;
 use std::io::{self, Read, Write};
 use std::sync::Mutex;
-use utils::{hash_u128_to_u64, roll_u128_kmer, sum_vec_bool, xorshift_u64};
+#[cfg(test)]
+use utils::sum_vec_bool;
+use utils::{hash_u128_to_u64, roll_u128_kmer, xorshift_u64};
 
 const SHARD_COUNT: usize = 1024;
 
@@ -60,6 +65,7 @@ impl BlockShard {
         }
     }
 
+    #[cfg(test)]
     pub fn count_set_bits(&self, subblock: usize) -> usize {
         let start = subblock * self.words_per_subblock;
         let end = start + self.words_per_subblock;
@@ -75,6 +81,7 @@ impl BlockShard {
         count
     }
 
+    #[cfg(test)]
     pub fn subblock_count(&self) -> usize {
         self.subblock_count
     }
@@ -489,6 +496,17 @@ impl BloomFilter {
 }
 
 impl FrozenBloomFilter {
+    pub fn into_mutable(self) -> BloomFilter {
+        let filter = self.filter.into_iter().map(Mutex::new).collect();
+        BloomFilter {
+            filter,
+            block_size: self.block_size,
+            nb_blocks: self.nb_blocks,
+            n_hashes: self.n_hashes,
+            block_size_mask: self.block_size_mask,
+        }
+    }
+
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         write_usize(writer, self.block_size)?;
         write_usize(writer, self.nb_blocks)?;
@@ -547,6 +565,8 @@ impl FrozenBloomFilter {
 
     ///counts different metrics like fill rate, avg fille rate of non empties, median one etc...
     ///returns : count of non empty blocks, max filled count, median filled count, avrg filled count
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_it_all(&self) -> (usize, usize, usize, usize, usize) {
         let counts_list: Mutex<Vec<usize>> = Mutex::new(Vec::new());
         let total_counter: Mutex<usize> = Mutex::new(0);
@@ -593,6 +613,8 @@ impl FrozenBloomFilter {
         )
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_false_bloom(
         &self,
         to_check: Vec<PackedSeqVec>,
@@ -616,6 +638,8 @@ impl FrozenBloomFilter {
         (false_negs, false_pos)
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_false_negatives(
         &self,
         to_check: Vec<PackedSeqVec>,
@@ -646,6 +670,8 @@ impl FrozenBloomFilter {
         (false_proportion, total_count, nb_seq_neg_tests)
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn count_false_positives(
         &self,
         k: u16,
@@ -670,6 +696,8 @@ impl FrozenBloomFilter {
         total_false_pos as f64 / ((avg_len - k as usize) * nb_sequence_false_negs) as f64
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     fn make_n_check_sequence(
         &self,
         k: u16,

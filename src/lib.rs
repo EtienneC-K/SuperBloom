@@ -42,6 +42,7 @@ use std::fs::File;
 use std::fmt::{Display, Formatter};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
+use std::sync::RwLock;
 use utils::{hash_u128_to_u64, sum_vec_bool, xorshift_u64};
 
 const SHARD_COUNT: usize = 1024;
@@ -102,6 +103,7 @@ pub enum SuperBloomError {
     FastaRead { path: String, message: String },
     Serialization { path: String, message: String },
     Deserialization { path: String, message: String },
+    WrongMode(String),
     InternalState(String),
     PoisonedLock,
 }
@@ -122,6 +124,7 @@ impl Display for SuperBloomError {
             SuperBloomError::Deserialization { path, message } => {
                 write!(f, "failed to deserialize superbloom from '{path}': {message}")
             }
+            SuperBloomError::WrongMode(message) => write!(f, "{message}"),
             SuperBloomError::InternalState(msg) => write!(f, "internal state error: {msg}"),
             SuperBloomError::PoisonedLock => write!(f, "internal mutex lock is poisoned"),
         }
@@ -130,9 +133,17 @@ impl Display for SuperBloomError {
 
 impl std::error::Error for SuperBloomError {}
 
-/// Mutable index under construction.
+enum BloomState {
+    Mutable(BloomFilter),
+    Frozen(FrozenBloomFilter),
+}
+
+/// SuperBloom index that can switch in-place between mutable (insert) and frozen (query) modes.
+///
+/// - `freeze()`: move shards from `Mutex<BlockShard>` to immutable `BlockShard` (no bit-array copy).
+/// - `thaw()`: rebuild mutex wrappers for further insertions (no bit-array copy).
 pub struct SuperBloom {
-    bloom: BloomFilter,
+    state: RwLock<Option<BloomState>>,
     decycler: Decycler,
     config: SuperBloomConfig,
     inserted_kmers: u64,
@@ -169,11 +180,31 @@ impl SuperBloom {
         );
 
         Ok(Self {
-            bloom,
+            state: RwLock::new(Some(BloomState::Mutable(bloom))),
             decycler,
             config,
             inserted_kmers: 0,
         })
+    }
+
+    /// Switch to frozen query mode.
+    ///
+    /// This transition moves shards in-place and does not duplicate bit arrays.
+    pub fn freeze(&self) {
+        self.ensure_frozen();
+    }
+
+    /// Switch back to mutable insert mode.
+    ///
+    /// This transition rebuilds mutex wrappers in-place and does not duplicate bit arrays.
+    pub fn thaw(&self) {
+        self.ensure_mutable();
+    }
+
+    /// Returns `true` when the index is currently in frozen query mode.
+    pub fn is_frozen(&self) -> bool {
+        let guard = self.state.read().unwrap_or_else(|err| err.into_inner());
+        matches!(guard.as_ref(), Some(BloomState::Frozen(_)))
     }
 
     /// Add one DNA sequence (ASCII bytes) to the index.
@@ -184,13 +215,11 @@ impl SuperBloom {
             return Ok(0);
         }
 
+        self.ensure_mutable();
         let packed = PackedSeqVec::from_ascii(sequence);
-        let added = insert_packed_sequence(
-            &self.bloom,
-            &self.decycler,
-            self.config,
-            packed,
-        )?;
+        let added = self.with_mutable_bloom(|bloom| {
+            insert_packed_sequence(bloom, &self.decycler, self.config, packed)
+        })?;
         self.inserted_kmers = self.inserted_kmers.saturating_add(added);
         Ok(added)
     }
@@ -202,6 +231,7 @@ impl SuperBloom {
         let path_string = path_ref.display().to_string();
         let mut reader = open_fastx_reader(path_ref, &path_string)?;
         let mut batch: Vec<Vec<u8>> = Vec::with_capacity(PAR_BATCH_RECORDS);
+        self.ensure_mutable();
 
         while let Some(record_result) = reader.next() {
             let record = record_result.map_err(|err| SuperBloomError::FastaRead {
@@ -212,7 +242,9 @@ impl SuperBloom {
             batch.push(record.seq().as_ref().to_vec());
 
             if batch.len() >= PAR_BATCH_RECORDS {
-                let (records_indexed, kmers_added) = self.index_batch_parallel(&batch)?;
+                let (records_indexed, kmers_added) = self.with_mutable_bloom(|bloom| {
+                    Self::index_batch_parallel(bloom, &self.decycler, self.config, &batch)
+                })?;
                 report.records_indexed = report.records_indexed.saturating_add(records_indexed);
                 report.kmers_added = report.kmers_added.saturating_add(kmers_added);
                 batch.clear();
@@ -220,7 +252,9 @@ impl SuperBloom {
         }
 
         if !batch.is_empty() {
-            let (records_indexed, kmers_added) = self.index_batch_parallel(&batch)?;
+            let (records_indexed, kmers_added) = self.with_mutable_bloom(|bloom| {
+                Self::index_batch_parallel(bloom, &self.decycler, self.config, &batch)
+            })?;
             report.records_indexed = report.records_indexed.saturating_add(records_indexed);
             report.kmers_added = report.kmers_added.saturating_add(kmers_added);
         }
@@ -229,19 +263,23 @@ impl SuperBloom {
         Ok(report)
     }
 
-    fn index_batch_parallel(&self, batch: &[Vec<u8>]) -> Result<(u64, u64), SuperBloomError> {
+    fn index_batch_parallel(
+        bloom: &BloomFilter,
+        decycler: &Decycler,
+        config: SuperBloomConfig,
+        batch: &[Vec<u8>],
+    ) -> Result<(u64, u64), SuperBloomError> {
         batch
             .par_iter()
             .try_fold(
                 || (0u64, 0u64),
                 |(records_indexed, kmers_added), sequence| {
-                    if sequence.len() < self.config.k as usize {
+                    if sequence.len() < config.k as usize {
                         return Ok((records_indexed, kmers_added));
                     }
 
                     let packed = PackedSeqVec::from_ascii(sequence);
-                    let added =
-                        insert_packed_sequence(&self.bloom, &self.decycler, self.config, packed)?;
+                    let added = insert_packed_sequence(bloom, decycler, config, packed)?;
                     if added > 0 {
                         Ok((
                             records_indexed.saturating_add(1),
@@ -263,6 +301,48 @@ impl SuperBloom {
             )
     }
 
+    /// Query one DNA sequence while in frozen mode.
+    ///
+    /// Returns one boolean per k-mer window.
+    pub fn query_sequence(&self, sequence: &[u8]) -> Result<Vec<bool>, SuperBloomError> {
+        self.ensure_frozen();
+        self.with_frozen_bloom(|frozen| {
+            Ok(run_query_sequence(
+                frozen,
+                &self.decycler,
+                self.config,
+                sequence,
+            ))
+        })
+    }
+
+    /// Query every record from a FASTA/FASTQ file while in frozen mode.
+    pub fn query_fasta<P: AsRef<Path>>(&self, path: P) -> Result<QueryReport, SuperBloomError> {
+        self.ensure_frozen();
+        self.with_frozen_bloom(|frozen| {
+            run_query_fasta(frozen, &self.decycler, self.config, path)
+        })
+    }
+
+    /// Serialize current index by freezing if needed.
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), SuperBloomError> {
+        self.ensure_frozen();
+        self.with_frozen_bloom(|frozen| {
+            save_frozen_components(path, frozen, self.config, self.inserted_kmers)
+        })
+    }
+
+    /// Load a serialized index in frozen query mode.
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, SuperBloomError> {
+        let frozen = FrozenSuperBloom::load(path)?;
+        Ok(Self {
+            state: RwLock::new(Some(BloomState::Frozen(frozen.bloom))),
+            decycler: frozen.decycler,
+            config: frozen.config,
+            inserted_kmers: frozen.inserted_kmers,
+        })
+    }
+
     /// Number of k-mers inserted so far.
     pub fn inserted_kmers(&self) -> u64 {
         self.inserted_kmers
@@ -273,55 +353,106 @@ impl SuperBloom {
         &self.config
     }
 
+    fn with_mutable_bloom<T>(
+        &self,
+        work: impl FnOnce(&BloomFilter) -> Result<T, SuperBloomError>,
+    ) -> Result<T, SuperBloomError> {
+        let guard = self.state.read().unwrap_or_else(|err| err.into_inner());
+        match guard.as_ref() {
+            Some(BloomState::Mutable(bloom)) => work(bloom),
+            Some(BloomState::Frozen(_)) => Err(SuperBloomError::WrongMode(
+                "index is in frozen mode unexpectedly".to_string(),
+            )),
+            None => Err(SuperBloomError::InternalState(
+                "bloom state is unexpectedly empty".to_string(),
+            )),
+        }
+    }
+
+    fn with_frozen_bloom<T>(
+        &self,
+        work: impl FnOnce(&FrozenBloomFilter) -> Result<T, SuperBloomError>,
+    ) -> Result<T, SuperBloomError> {
+        let guard = self.state.read().unwrap_or_else(|err| err.into_inner());
+        match guard.as_ref() {
+            Some(BloomState::Frozen(bloom)) => work(bloom),
+            Some(BloomState::Mutable(_)) => Err(SuperBloomError::WrongMode(
+                "index is in mutable mode unexpectedly".to_string(),
+            )),
+            None => Err(SuperBloomError::InternalState(
+                "bloom state is unexpectedly empty".to_string(),
+            )),
+        }
+    }
+
     /// Freeze this mutable index into a read-only query index.
     pub fn into_frozen(self) -> FrozenSuperBloom {
+        let state_opt = self
+            .state
+            .into_inner()
+            .unwrap_or_else(|err| err.into_inner());
+        let state = state_opt.expect("internal state should be present");
+        let bloom = match state {
+            BloomState::Frozen(frozen) => frozen,
+            BloomState::Mutable(mutable) => mutable.into_frozen(),
+        };
         FrozenSuperBloom {
-            bloom: self.bloom.into_frozen(),
+            bloom,
             decycler: self.decycler,
             config: self.config,
             inserted_kmers: self.inserted_kmers,
         }
     }
+
+    fn ensure_frozen(&self) {
+        let needs_freeze = {
+            let guard = self.state.read().unwrap_or_else(|err| err.into_inner());
+            matches!(guard.as_ref(), Some(BloomState::Mutable(_)))
+        };
+        if !needs_freeze {
+            return;
+        }
+        let mut guard = self.state.write().unwrap_or_else(|err| err.into_inner());
+        let old_state = guard.take().expect("internal state should be present");
+        *guard = Some(match old_state {
+            BloomState::Mutable(mutable) => BloomState::Frozen(mutable.into_frozen()),
+            BloomState::Frozen(frozen) => BloomState::Frozen(frozen),
+        });
+    }
+
+    fn ensure_mutable(&self) {
+        let needs_thaw = {
+            let guard = self.state.read().unwrap_or_else(|err| err.into_inner());
+            matches!(guard.as_ref(), Some(BloomState::Frozen(_)))
+        };
+        if !needs_thaw {
+            return;
+        }
+        let mut guard = self.state.write().unwrap_or_else(|err| err.into_inner());
+        let old_state = guard.take().expect("internal state should be present");
+        *guard = Some(match old_state {
+            BloomState::Frozen(frozen) => BloomState::Mutable(frozen.into_mutable()),
+            BloomState::Mutable(mutable) => BloomState::Mutable(mutable),
+        });
+    }
 }
 
 impl FrozenSuperBloom {
+    /// Rebuild mutable wrappers to allow further insertions.
+    ///
+    /// This transition moves shards in-place and does not duplicate bit arrays.
+    pub fn into_mutable(self) -> SuperBloom {
+        SuperBloom {
+            state: RwLock::new(Some(BloomState::Mutable(self.bloom.into_mutable()))),
+            decycler: self.decycler,
+            config: self.config,
+            inserted_kmers: self.inserted_kmers,
+        }
+    }
+
     /// Serialize this frozen index to a binary file.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), SuperBloomError> {
-        let path_ref = path.as_ref();
-        let path_string = path_ref.display().to_string();
-        let file = File::create(path_ref).map_err(|err| SuperBloomError::Serialization {
-            path: path_string.clone(),
-            message: err.to_string(),
-        })?;
-        let mut writer = BufWriter::new(file);
-
-        writer
-            .write_all(SUPERBLOOM_MAGIC)
-            .map_err(|err| SuperBloomError::Serialization {
-                path: path_string.clone(),
-                message: err.to_string(),
-            })?;
-        write_config(&mut writer, self.config).map_err(|err| SuperBloomError::Serialization {
-            path: path_string.clone(),
-            message: err.to_string(),
-        })?;
-        writer
-            .write_all(&self.inserted_kmers.to_le_bytes())
-            .map_err(|err| SuperBloomError::Serialization {
-                path: path_string.clone(),
-                message: err.to_string(),
-            })?;
-        self.bloom
-            .write_to(&mut writer)
-            .map_err(|err| SuperBloomError::Serialization {
-                path: path_string.clone(),
-                message: err.to_string(),
-            })?;
-        writer.flush().map_err(|err| SuperBloomError::Serialization {
-            path: path_string,
-            message: err.to_string(),
-        })?;
-        Ok(())
+        save_frozen_components(path, &self.bloom, self.config, self.inserted_kmers)
     }
 
     /// Load a frozen index from a file previously written with `save`.
@@ -389,54 +520,12 @@ impl FrozenSuperBloom {
     ///
     /// The returned vector has one boolean per k-mer window.
     pub fn query_sequence(&self, sequence: &[u8]) -> Vec<bool> {
-        if sequence.len() < self.config.k as usize {
-            return Vec::new();
-        }
-
-        let packed = PackedSeqVec::from_ascii(sequence);
-        if self.config.s <= 31 {
-            self.bloom.check_sequence(
-                packed,
-                self.config.k,
-                self.config.m,
-                self.config.s,
-                &self.decycler,
-                self.config.minimizer_mode,
-            )
-        } else {
-            self.bloom.check_sequence_u128(
-                packed,
-                self.config.k,
-                self.config.m,
-                self.config.s,
-                &self.decycler,
-                self.config.minimizer_mode,
-            )
-        }
+        run_query_sequence(&self.bloom, &self.decycler, self.config, sequence)
     }
 
     /// Query every record from a FASTA/FASTQ file.
     pub fn query_fasta<P: AsRef<Path>>(&self, path: P) -> Result<QueryReport, SuperBloomError> {
-        let mut report = QueryReport::default();
-        let path_ref = path.as_ref();
-        let path_string = path_ref.display().to_string();
-        let mut reader = open_fastx_reader(path_ref, &path_string)?;
-
-        while let Some(record_result) = reader.next() {
-            let record = record_result.map_err(|err| SuperBloomError::FastaRead {
-                path: path_string.clone(),
-                message: err.to_string(),
-            })?;
-            report.records_processed = report.records_processed.saturating_add(1);
-
-            let hits = self.query_sequence(record.seq().as_ref());
-            report.queried_kmers = report.queried_kmers.saturating_add(hits.len() as u64);
-            report.positive_kmers = report
-                .positive_kmers
-                .saturating_add(sum_vec_bool(&hits) as u64);
-        }
-
-        Ok(report)
+        run_query_fasta(&self.bloom, &self.decycler, self.config, path)
     }
 
     /// Number of k-mers inserted before freezing.
@@ -455,6 +544,108 @@ fn open_fastx_reader(path: &Path, path_string: &str) -> Result<Box<dyn FastxRead
         path: path_string.to_string(),
         message: err.to_string(),
     })
+}
+
+fn run_query_sequence(
+    bloom: &FrozenBloomFilter,
+    decycler: &Decycler,
+    config: SuperBloomConfig,
+    sequence: &[u8],
+) -> Vec<bool> {
+    if sequence.len() < config.k as usize {
+        return Vec::new();
+    }
+
+    let packed = PackedSeqVec::from_ascii(sequence);
+    if config.s <= 31 {
+        bloom.check_sequence(
+            packed,
+            config.k,
+            config.m,
+            config.s,
+            decycler,
+            config.minimizer_mode,
+        )
+    } else {
+        bloom.check_sequence_u128(
+            packed,
+            config.k,
+            config.m,
+            config.s,
+            decycler,
+            config.minimizer_mode,
+        )
+    }
+}
+
+fn run_query_fasta<P: AsRef<Path>>(
+    bloom: &FrozenBloomFilter,
+    decycler: &Decycler,
+    config: SuperBloomConfig,
+    path: P,
+) -> Result<QueryReport, SuperBloomError> {
+    let mut report = QueryReport::default();
+    let path_ref = path.as_ref();
+    let path_string = path_ref.display().to_string();
+    let mut reader = open_fastx_reader(path_ref, &path_string)?;
+
+    while let Some(record_result) = reader.next() {
+        let record = record_result.map_err(|err| SuperBloomError::FastaRead {
+            path: path_string.clone(),
+            message: err.to_string(),
+        })?;
+        report.records_processed = report.records_processed.saturating_add(1);
+        let hits = run_query_sequence(bloom, decycler, config, record.seq().as_ref());
+        report.queried_kmers = report.queried_kmers.saturating_add(hits.len() as u64);
+        report.positive_kmers = report
+            .positive_kmers
+            .saturating_add(sum_vec_bool(&hits) as u64);
+    }
+
+    Ok(report)
+}
+
+fn save_frozen_components<P: AsRef<Path>>(
+    path: P,
+    bloom: &FrozenBloomFilter,
+    config: SuperBloomConfig,
+    inserted_kmers: u64,
+) -> Result<(), SuperBloomError> {
+    let path_ref = path.as_ref();
+    let path_string = path_ref.display().to_string();
+    let file = File::create(path_ref).map_err(|err| SuperBloomError::Serialization {
+        path: path_string.clone(),
+        message: err.to_string(),
+    })?;
+    let mut writer = BufWriter::new(file);
+
+    writer
+        .write_all(SUPERBLOOM_MAGIC)
+        .map_err(|err| SuperBloomError::Serialization {
+            path: path_string.clone(),
+            message: err.to_string(),
+        })?;
+    write_config(&mut writer, config).map_err(|err| SuperBloomError::Serialization {
+        path: path_string.clone(),
+        message: err.to_string(),
+    })?;
+    writer
+        .write_all(&inserted_kmers.to_le_bytes())
+        .map_err(|err| SuperBloomError::Serialization {
+            path: path_string.clone(),
+            message: err.to_string(),
+        })?;
+    bloom
+        .write_to(&mut writer)
+        .map_err(|err| SuperBloomError::Serialization {
+            path: path_string.clone(),
+            message: err.to_string(),
+        })?;
+    writer.flush().map_err(|err| SuperBloomError::Serialization {
+        path: path_string,
+        message: err.to_string(),
+    })?;
+    Ok(())
 }
 
 fn write_config<W: Write>(writer: &mut W, config: SuperBloomConfig) -> Result<(), std::io::Error> {
