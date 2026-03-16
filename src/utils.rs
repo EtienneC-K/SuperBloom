@@ -86,8 +86,10 @@ mod tests {
     }
 
     #[test]
-    fn xorshift_u64_zero_stays_zero() {
-        assert_eq!(xorshift_u64(0), 0);
+    fn xorshift_u64_zero_hashes_deterministically() {
+        let hashed = xorshift_u64(0);
+        assert_eq!(hashed, xorshift_u64(0));
+        assert_ne!(hashed, 0);
     }
 
     #[test]
