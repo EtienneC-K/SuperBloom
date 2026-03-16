@@ -45,6 +45,23 @@ cargo test
 cargo run -r
 ```
 
+### Run the benchmark binary
+
+```bash
+cargo run --release --bin benchmark -- \
+  --index-fasta data/ecoli.fa.zst \
+  --query-fasta data/ecoli.fa.zst \
+  --k 31 --m 21 --s 27 \
+  --n-hashes 8 \
+  --size-exponent 35 \
+  --block-size-exponent 9 \
+  --threads 8
+```
+
+`benchmark` always uses `MinimizerMode::Simd` (other minimizer modes are experimental).
+
+For automated parameter sweeps (TSV + plots), see [benchmark/README.md](/home/nadine/Code/SuperBloom/benchmark/README.md).
+
 The showcase:
 
 1. builds an index

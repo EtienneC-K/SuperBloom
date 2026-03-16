@@ -8,4 +8,5 @@ bench_results.csv
 __pycache__/
 *.pyc
 /benchmarks/results/*
+/benchmark/results/*
 ecoli.fa
