@@ -20,7 +20,7 @@ fn first_query_of_len(path: &str, query_len: usize) -> Result<Vec<u8>, Box<dyn E
 fn main() -> Result<(), Box<dyn Error>> {
     println!("SuperBloom Library Showcase");
     println!("===========================");
-    println!("Dataset: ecoli.fa (index + query source)");
+    println!("Dataset: data/ecoli.fa.zst (index + query source)");
 
     let available_threads = std::thread::available_parallelism()
         .map(|threads| threads.get())
@@ -41,8 +41,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         block_size_exponent: 13,
         minimizer_mode: MinimizerMode::Simd,
     };
-    let index_fasta = "ecoli.fa";
-    let query_fasta = "ecoli.fa";
+    let index_fasta = "data/ecoli.fa.zst";
+    let query_fasta = "data/ecoli.fa.zst";
     let query_len = 100usize;
     let query_sequence = first_query_of_len(query_fasta, query_len)?;
 
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   total inserted so far: {}", bloom.inserted_kmers());
 
     println!("\n3) SuperBloom::add_fasta(path)");
-    // Add every record from ecoli.fa to the index.
+    // Add every record from compressed data/ecoli.fa.zst to the index.
     let add_report = bloom.add_fasta(index_fasta)?;
     println!("   records processed: {}", add_report.records_processed);
     println!("   records indexed:   {}", add_report.records_indexed);
@@ -95,8 +95,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   loaded index from file.");
     println!("   loaded inserted_kmers(): {}", loaded.inserted_kmers());
 
-    println!("\n7) Re-query after loading");
-    // Run the same queries again on the loaded index.
+    println!("\n7) Insert after loading");
+    // Insertion after loading auto-switches internally back to mutable mode.
+    let added_after_load = loaded.add_sequence(&query_sequence)?;
+    println!("   added k-mers after load: {added_after_load}");
+    let hits_after_insert = loaded.query_sequence(&query_sequence)?;
+    let positives_after_insert = hits_after_insert.iter().filter(|&&hit| hit).count();
+    println!(
+        "   query after insert: {} / {} positive windows",
+        positives_after_insert,
+        hits_after_insert.len()
+    );
+
+    println!("\n8) Re-query after loading");
+    // Run the same whole-file query again on the loaded index.
     let loaded_hits = loaded.query_sequence(&query_sequence)?;
     let loaded_positive = loaded_hits.iter().filter(|&&hit| hit).count();
     let loaded_report = loaded.query_fasta(query_fasta)?;
@@ -108,18 +120,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "   query_fasta found (loaded): {} / {} k-mers",
         loaded_report.positive_kmers, loaded_report.queried_kmers
-    );
-
-    println!("\n8) Insert after queries ");
-    // Insertion after querying auto-switches internally back to mutable mode.
-    let added_after_query = loaded.add_sequence(&query_sequence)?;
-    println!("   added k-mers after prior queries: {added_after_query}");
-    let hits_after_insert = loaded.query_sequence(&query_sequence)?;
-    let positives_after_insert = hits_after_insert.iter().filter(|&&hit| hit).count();
-    println!(
-        "   query after insert: {} / {} positive windows",
-        positives_after_insert,
-        hits_after_insert.len()
     );
 
     let _ = fs::remove_file(&save_path);
