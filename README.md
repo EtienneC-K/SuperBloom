@@ -42,7 +42,7 @@ cargo test
 ### Run the showcase binary
 
 ```bash
-cargo run -r
+cargo run -r --bin bloomybloom
 ```
 
 ### Run the benchmark binary
