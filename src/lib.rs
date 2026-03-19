@@ -465,6 +465,7 @@ impl SuperBloom {
     }
 
     /// Freeze this mutable index into a read-only query index.
+    #[must_use]
     pub fn into_frozen(self) -> FrozenSuperBloom {
         let state_opt = self
             .state
