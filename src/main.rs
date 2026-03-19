@@ -1,8 +1,8 @@
-use bloomybloom::{SuperBloom, SuperBloomConfig};
 use needletail::parse_fastx_file;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use superbloom::{SuperBloom, SuperBloomConfig};
 
 fn first_query_of_len(path: &str, query_len: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut reader = parse_fastx_file(path)?;

@@ -5,7 +5,7 @@
 //! `add_sequence` / `add_fasta`.
 //!
 //! ```no_run
-//! use bloomybloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
+//! use superbloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 //!
 //! let config = SuperBloomConfig {
 //!     k: 31,
@@ -22,7 +22,7 @@
 //! let frozen = bloom.into_frozen();
 //! let hits = frozen.query_sequence(b"ACGTACGTACGTACGTACGTACGTACGTACGT");
 //! assert!(!hits.is_empty());
-//! # Ok::<(), bloomybloom::SuperBloomError>(())
+//! # Ok::<(), superbloom::SuperBloomError>(())
 //! ```
 
 mod bloom;

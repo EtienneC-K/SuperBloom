@@ -44,7 +44,7 @@ cargo test
 ### Run the showcase binary
 
 ```bash
-cargo run -r --bin bloomybloom
+cargo run -r --bin superbloom
 ```
 
 ### Run the benchmark binary
@@ -105,7 +105,7 @@ Main public types:
 ## Fully Commented Example (Library Usage)
 
 ```rust
-use bloomybloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
+use superbloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1) Start from crate defaults.

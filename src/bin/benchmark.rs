@@ -1,7 +1,7 @@
-use bloomybloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 use clap::{Arg, Command, value_parser};
 use std::error::Error;
 use std::time::Instant;
+use superbloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 
 // TODO use Cli struct
 fn cli() -> Command {
