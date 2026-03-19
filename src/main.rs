@@ -31,7 +31,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Create a new mutable index from default crate parameters.
     let mut bloom = SuperBloom::new(config)?;
     println!("   created index with config: {:?}", bloom.config());
-    println!("   indexing thread pool size:  {}", bloom.threads().unwrap_or(1));
+    println!(
+        "   indexing thread pool size:  {}",
+        bloom.threads().unwrap_or(1)
+    );
 
     println!("\n2) SuperBloom::add_sequence(&[u8])");
     // Add one in-memory DNA sequence.

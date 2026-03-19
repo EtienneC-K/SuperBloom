@@ -1,5 +1,5 @@
 use bloomybloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
-use clap::{value_parser, Arg, Command};
+use clap::{Arg, Command, value_parser};
 use std::error::Error;
 use std::time::Instant;
 
@@ -91,9 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .copied()
         .unwrap_or_else(|| k.saturating_sub(4).max(1));
     let n_hashes = *matches.get_one::<usize>("n-hashes").expect("defaulted");
-    let size_exponent = *matches
-        .get_one::<u8>("size-exponent")
-        .expect("defaulted");
+    let size_exponent = *matches.get_one::<u8>("size-exponent").expect("defaulted");
     let block_size_exponent = *matches
         .get_one::<u8>("block-size-exponent")
         .expect("defaulted");
@@ -157,4 +155,3 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("\nTotal: {total_secs:.3}s");
     Ok(())
 }
-

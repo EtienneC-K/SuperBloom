@@ -39,8 +39,8 @@ use needletail::{FastxReader, parse_fastx_file};
 use packed_seq::{PackedSeq, PackedSeqVec, Seq, SeqVec};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use std::fs::File;
 use std::fmt::{Display, Formatter};
+use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::{Once, RwLock};
@@ -123,13 +123,19 @@ impl Display for SuperBloomError {
                 write!(f, "failed to open FASTA/FASTQ '{path}': {message}")
             }
             SuperBloomError::FastaRead { path, message } => {
-                write!(f, "failed to read FASTA/FASTQ record from '{path}': {message}")
+                write!(
+                    f,
+                    "failed to read FASTA/FASTQ record from '{path}': {message}"
+                )
             }
             SuperBloomError::Serialization { path, message } => {
                 write!(f, "failed to serialize superbloom to '{path}': {message}")
             }
             SuperBloomError::Deserialization { path, message } => {
-                write!(f, "failed to deserialize superbloom from '{path}': {message}")
+                write!(
+                    f,
+                    "failed to deserialize superbloom from '{path}': {message}"
+                )
             }
             SuperBloomError::WrongMode(message) => write!(f, "{message}"),
             SuperBloomError::InternalState(msg) => write!(f, "internal state error: {msg}"),
@@ -322,9 +328,8 @@ impl SuperBloom {
 
     fn index_batch(&self, batch: &[Vec<u8>]) -> Result<(u64, u64), SuperBloomError> {
         self.with_mutable_bloom(|bloom| match &self.thread_pool {
-            Some(pool) => pool.install(|| {
-                Self::index_batch_parallel(bloom, &self.decycler, self.config, batch)
-            }),
+            Some(pool) => pool
+                .install(|| Self::index_batch_parallel(bloom, &self.decycler, self.config, batch)),
             None => Self::index_batch_parallel(bloom, &self.decycler, self.config, batch),
         })
     }
@@ -630,7 +635,10 @@ impl FrozenSuperBloom {
     }
 }
 
-fn open_fastx_reader(path: &Path, path_string: &str) -> Result<Box<dyn FastxReader>, SuperBloomError> {
+fn open_fastx_reader(
+    path: &Path,
+    path_string: &str,
+) -> Result<Box<dyn FastxReader>, SuperBloomError> {
     parse_fastx_file(path).map_err(|err| SuperBloomError::FastaOpen {
         path: path_string.to_string(),
         message: err.to_string(),
@@ -789,10 +797,12 @@ fn save_frozen_components<P: AsRef<Path>>(
             path: path_string.clone(),
             message: err.to_string(),
         })?;
-    writer.flush().map_err(|err| SuperBloomError::Serialization {
-        path: path_string,
-        message: err.to_string(),
-    })?;
+    writer
+        .flush()
+        .map_err(|err| SuperBloomError::Serialization {
+            path: path_string,
+            message: err.to_string(),
+        })?;
     Ok(())
 }
 
@@ -857,7 +867,7 @@ fn read_config<R: Read>(reader: &mut R) -> Result<SuperBloomConfig, std::io::Err
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "unknown minimizer mode tag",
-            ))
+            ));
         }
     };
 
@@ -870,9 +880,8 @@ fn read_config<R: Read>(reader: &mut R) -> Result<SuperBloomConfig, std::io::Err
         block_size_exponent: block_exp[0],
         minimizer_mode,
     };
-    resolve_geometry(config).map_err(|err| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string())
-    })?;
+    resolve_geometry(config)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err.to_string()))?;
     Ok(config)
 }
 
@@ -923,7 +932,9 @@ fn resolve_geometry(config: SuperBloomConfig) -> Result<(usize, usize, usize), S
     let size_bits = 1usize
         .checked_shl(config.size_exponent as u32)
         .ok_or_else(|| {
-            SuperBloomError::InvalidConfig("size_exponent is too large for this platform".to_string())
+            SuperBloomError::InvalidConfig(
+                "size_exponent is too large for this platform".to_string(),
+            )
         })?;
     let block_size_bits = 1usize
         .checked_shl(config.block_size_exponent as u32)
@@ -955,8 +966,13 @@ fn insert_packed_sequence(
     sequence: PackedSeqVec,
 ) -> Result<u64, SuperBloomError> {
     let total_kmers = sequence.len() + 1 - config.k as usize;
-    let (super_kmers_positions, minimizer_values, packed_sequence) =
-        selected_mins_x_pos(sequence, config.k, config.m, decycler, config.minimizer_mode);
+    let (super_kmers_positions, minimizer_values, packed_sequence) = selected_mins_x_pos(
+        sequence,
+        config.k,
+        config.m,
+        decycler,
+        config.minimizer_mode,
+    );
 
     if super_kmers_positions.len() != minimizer_values.len() {
         return Err(SuperBloomError::InternalState(
