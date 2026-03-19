@@ -916,12 +916,12 @@ fn resolve_geometry(config: SuperBloomConfig) -> Result<(usize, usize, usize), S
             "s must satisfy: 1 <= s <= k and s < 62".to_string(),
         ));
     }
-    if let MinimizerMode::OpenClosed { t } = config.minimizer_mode {
-        if t == 0 || t > config.m {
-            return Err(SuperBloomError::InvalidConfig(
-                "open-closed minimizer requires 1 <= t <= m".to_string(),
-            ));
-        }
+    if let MinimizerMode::OpenClosed { t } = config.minimizer_mode
+        && (t == 0 || t > config.m)
+    {
+        return Err(SuperBloomError::InvalidConfig(
+            "open-closed minimizer requires 1 <= t <= m".to_string(),
+        ));
     }
     if config.block_size_exponent > config.size_exponent {
         return Err(SuperBloomError::InvalidConfig(

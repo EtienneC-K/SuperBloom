@@ -35,9 +35,9 @@ impl Decycler {
         self.direct_list
             .par_iter_mut()
             .enumerate()
-            .for_each(|(i, mut block)| {
+            .for_each(|(i, block)| {
                 //println!("ca compute un block en léééégende");
-                compute_block(i, &mut block, self.m, &vec_ci);
+                compute_block(i, block, self.m, &vec_ci);
             })
     }
 
@@ -60,25 +60,18 @@ impl Decycler {
         //reading the correct bit using bitshifting
         //let boolean: bool = if (integer>>(63-address%64))%2 == 1 {true} else {false};
         //REMOVED MODULO
-        let boolean: bool = if (integer >> (63 - (address & 63))) & 1 == 1 {
-            true
-        } else {
-            false
-        };
-
-        //return
-        boolean
+        (integer >> (63 - (address & 63))) & 1 == 1
     }
 }
 
-fn compute_block(i: usize, block: &mut Vec<u64>, m: u16, vec_ci: &Vec<f64>) {
+fn compute_block(i: usize, block: &mut [u64], m: u16, slice_ci: &[f64]) {
     let mut kmer: u64 = (i * CYCLER_BLOCK_SIZE * 64) as u64;
 
     for j in 0..CYCLER_BLOCK_SIZE {
         let mut to_insert: u64 = 0;
         for k in 0..64 {
-            //let is_decycler: bool = compute_membership(4_u64.pow(m as u32)-kmer, m, vec_ci);
-            let is_decycler: bool = compute_membership(kmer, m, vec_ci);
+            //let is_decycler: bool = compute_membership(4_u64.pow(m as u32)-kmer, m, slice_ci);
+            let is_decycler: bool = compute_membership(kmer, m, slice_ci);
             if is_decycler {
                 to_insert += 1 << (63 - k);
             }
@@ -89,11 +82,11 @@ fn compute_block(i: usize, block: &mut Vec<u64>, m: u16, vec_ci: &Vec<f64>) {
     }
 }
 
-///algorithm to check if a kmer is member of a minimum decysling set
+///algorithm to check if a kmer is member of a minimum decycling set
 ///see "Efficient minimizer orders for large values of k using minimum decycling sets" by
 ///David Pellow, Lianrong Pu, Baris Ekim, Kior Kotlar, Bonnie Berger, Ron Shamir and Yaron
 ///Orenstein; page 3
-pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
+pub fn compute_membership(kmer: u64, m: u16, slice_ci: &[f64]) -> bool {
     let epsilon: f64 = 0.00001;
     let mut imaginary_x: f64 = 0.0;
     let mut imaginary_x_prime: f64 = 0.0;
@@ -101,9 +94,9 @@ pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
         //let x_i: u64 = (kmer>>(2*i))%4;
         //REMOVED MODULO
         let x_i: u64 = (kmer >> (2 * i)) & 3;
-        imaginary_x += vec_ci[i as usize] * x_i as f64;
+        imaginary_x += slice_ci[i as usize] * x_i as f64;
         let i_prime: usize = if i < m - 1 { i as usize + 1 } else { 0 };
-        imaginary_x_prime += vec_ci[i_prime] * x_i as f64;
+        imaginary_x_prime += slice_ci[i_prime] * x_i as f64;
     }
     //println!("partie imaginaire : {imaginary_x}, du précédent : {imaginary_x_prime}");
 
@@ -127,13 +120,13 @@ pub fn compute_membership(kmer: u64, m: u16, vec_ci: &Vec<f64>) -> bool {
                 } else {
                     k += 1
                 };
-                if (l >= m - 1) && (k % m == 0) {
+                if (l >= m - 1) && k.is_multiple_of(m) {
                     return true;
                 };
             }
         }
     }
-    return false;
+    false
 }
 
 pub fn init_vec_ci(m: u16) -> Vec<f64> {

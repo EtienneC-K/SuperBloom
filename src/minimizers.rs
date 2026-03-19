@@ -296,12 +296,14 @@ fn mins_from_kmer<'a>(
     m: u16,
     k: u16,
 ) -> (usize, bool, PackedSeq<'a>) {
-    for j in i..i + k as usize - m as usize + 1 {
+    let k = usize::from(k);
+    let m = usize::from(m);
+    for j in i..i + k - m + 1 {
         if is_decycler[j] {
-            return (j, true, packed_seq.slice(j..j + m as usize));
+            return (j, true, packed_seq.slice(j..j + m));
         }
     }
-    (i, false, packed_seq.slice(i..i + m as usize))
+    (i, false, packed_seq.slice(i..i + m))
 }
 
 #[cfg(test)]

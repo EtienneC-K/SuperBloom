@@ -3,6 +3,7 @@ use clap::{Arg, Command, value_parser};
 use std::error::Error;
 use std::time::Instant;
 
+// TODO use Cli struct
 fn cli() -> Command {
     Command::new("superbloom-benchmark")
         .about("Benchmark-oriented SuperBloom runner (SIMD minimizers only)")

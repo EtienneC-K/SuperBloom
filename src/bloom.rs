@@ -14,7 +14,6 @@ use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
 #[cfg(test)]
 use rayon::prelude::{IntoParallelRefIterator, ParallelSliceMut};
-use seq_hash::NtHasher;
 use std::io::{self, Read, Write};
 use std::sync::Mutex;
 #[cfg(test)]
@@ -122,7 +121,7 @@ impl BloomFilter {
             filter.push(Mutex::new(BlockShard::new(subblocks_per_shard, block_size)));
         }
         Self {
-            filter: filter,
+            filter,
             block_size,
             nb_blocks,
             n_hashes,
@@ -654,16 +653,12 @@ impl FrozenBloomFilter {
         let mut total_count: usize = 0;
         for sequence in to_check {
             total_count += sequence.len() - (k as usize) + 1;
-            let count_false: usize;
-            if l <= 31 {
-                let presence_vec =
-                    self.check_sequence(sequence, k, m, l, decycler_set, minimizer_mode);
-                count_false = presence_vec.len() - sum_vec_bool(&presence_vec);
+            let presence_vec = if l <= 31 {
+                self.check_sequence(sequence, k, m, l, decycler_set, minimizer_mode)
             } else {
-                let presence_vec =
-                    self.check_sequence_u128(sequence, k, m, l, decycler_set, minimizer_mode);
-                count_false = presence_vec.len() - sum_vec_bool(&presence_vec);
-            }
+                self.check_sequence_u128(sequence, k, m, l, decycler_set, minimizer_mode)
+            };
+            let count_false = presence_vec.len() - sum_vec_bool(&presence_vec);
             false_negative_count += count_false;
         }
         let false_proportion: f64 = false_negative_count as f64 / total_count as f64;
@@ -717,16 +712,15 @@ impl FrozenBloomFilter {
         }
         let sequence: PackedSeqVec = PackedSeqVec::from_ascii(seq.as_bytes());
 
-        let count_true: usize;
-        if l <= 31 {
-            let presence_vec = self.check_sequence(sequence, k, m, l, decycler_set, minimizer_mode);
-            count_true = sum_vec_bool(&presence_vec);
+        let presence_vec = if l <= 31 {
+            self.check_sequence(sequence, k, m, l, decycler_set, minimizer_mode)
         } else {
-            let presence_vec =
-                self.check_sequence_u128(sequence, k, m, l, decycler_set, minimizer_mode);
-            count_true = sum_vec_bool(&presence_vec);
-        }
+            self.check_sequence_u128(sequence, k, m, l, decycler_set, minimizer_mode)
+        };
 
+        let count_true = sum_vec_bool(&presence_vec);
+
+        #[allow(clippy::let_and_return, reason = "allows to name the variable")]
         count_true
     }
 
@@ -905,12 +899,11 @@ fn check_smer_hash_u128(
     true
 }
 
-///to get the NtHasher hasher's when creating the bloomfilter
-fn _init_hasher(seed: u32, k: usize) -> NtHasher {
-    //we build hashers with different seeds
-    let hasher = <seq_hash::NtHasher>::new_with_seed(k, seed);
-    hasher
-}
+// ///to get the NtHasher hasher's when creating the bloomfilter
+// fn _init_hasher(seed: u32, k: usize) -> NtHasher {
+//     //we build hashers with different seeds
+//     seq_hash::NtHasher::new_with_seed(k, seed)
+// }
 
 #[cfg(test)]
 mod tests {

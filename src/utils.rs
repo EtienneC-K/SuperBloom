@@ -1,15 +1,15 @@
-///module with small utility fucntions
+//! Module with small utility fucntions
 
 //use bitvec::prelude::*;
 //use packed_seq::{PackedSeq, Seq};
 
-///hashing function for u64 using xorshift
-//pub fn xorshift_u64(mut x: u64) -> u64 {
-//    x ^= x << 13;
-//    x ^= x >> 7;
-//    x ^= x << 17;
-//    x
-//}
+// ///hashing function for u64 using xorshift
+// pub fn xorshift_u64(mut x: u64) -> u64 {
+//     x ^= x << 13;
+//     x ^= x >> 7;
+//     x ^= x << 17;
+//     x
+// }
 
 pub fn xorshift_u64(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);

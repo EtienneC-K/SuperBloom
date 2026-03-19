@@ -9,9 +9,10 @@ pub struct SuperBitVec {
 }
 
 impl SuperBitVec {
-    ///creates a new superbitvec, filled with 0's, "makes the actual complete structure"
+    // TODO doc
+    /// Creates a new superbitvec, filled with 0's, "makes the actual complete structure"
     pub fn new(size: usize) -> Self {
-        let vec_size: usize = if size % 64 == 0 {
+        let vec_size: usize = if size.is_multiple_of(64) {
             size / 64
         } else {
             size / 64 + 1
@@ -30,32 +31,26 @@ impl SuperBitVec {
 
         //compute which bit to insert
         let block_num: usize = address >> 6;
-        let mut to_insert: u64 = 1 << (63 - (address & 63)) as u64; //trust the calculation
-        if value == false {
-            to_insert = u64::MAX - to_insert;
-        }
+        let to_insert: u64 = 1 << (63 - (address & 63)) as u64; //trust the calculation
 
         //now performing the insertion with an atomic or
-        if value == true {
-            self.vector[block_num] = self.vector[block_num] | to_insert;
+        if value {
+            self.vector[block_num] |= to_insert;
         } else {
-            self.vector[block_num] = self.vector[block_num] & to_insert;
+            let to_insert = u64::MAX - to_insert;
+            self.vector[block_num] &= to_insert;
         }
     }
 
     ///getter for a certain bit
     pub fn get(&self, address: usize) -> bool {
         let block = self.vector[address >> 6];
-        let boolean: bool = if (block >> (63 - (address & 63))) & 1 == 1 {
-            true
-        } else {
-            false
-        };
+        let boolean: bool = (block >> (63 - (address & 63))) & 1 == 1;
         boolean
     }
 
-    ///very standard len method
-    pub fn len(&self) -> usize {
+    /// Returns the size of the filter
+    pub fn size(&self) -> usize {
         self.size
     }
 }
@@ -94,6 +89,7 @@ impl Display for SuperBitVec {
     }
 }
 
+// TODO derive Clone ?
 impl Clone for SuperBitVec {
     fn clone(&self) -> Self {
         let vector = self.vector.clone();
@@ -155,7 +151,7 @@ mod tests {
         let cloned = bitvec.clone();
         assert!(cloned.get(1));
         assert!(cloned.get(65));
-        assert_eq!(cloned.len(), 66);
+        assert_eq!(cloned.size(), 66);
     }
 
     #[test]
@@ -169,7 +165,7 @@ mod tests {
     #[test]
     fn len_matches_requested_size() {
         let bitvec = SuperBitVec::new(127);
-        assert_eq!(bitvec.len(), 127);
+        assert_eq!(bitvec.size(), 127);
     }
 
     #[test]
