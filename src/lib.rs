@@ -12,7 +12,7 @@
 //!     m: 13,
 //!     s: 21,
 //!     n_hashes: 3,
-//!     size_exponent: 20,
+//!     bit_vector_size_exponent: 20,
 //!     block_size_exponent: 10,
 //!     minimizer_mode: MinimizerMode::Simd,
 //! };
@@ -55,7 +55,7 @@ static EXPERIMENTAL_MINIMIZER_WARNING_ONCE: Once = Once::new();
 /// Full manual configuration for building a SuperBloom index.
 ///
 /// All geometry values are explicit powers of two:
-/// - `size_exponent`: bloom filter size in bits is `2^size_exponent`
+/// - `bit_vector_size_exponent`: bloom filter size in bits is `2^bit_vector_size_exponent`
 /// - `block_size_exponent`: block size in bits is `2^block_size_exponent`
 #[derive(Clone, Copy, Debug)]
 pub struct SuperBloomConfig {
@@ -63,7 +63,7 @@ pub struct SuperBloomConfig {
     pub m: u16,
     pub s: u16,
     pub n_hashes: usize,
-    pub size_exponent: u8,
+    pub bit_vector_size_exponent: u8,
     pub block_size_exponent: u8,
     pub minimizer_mode: MinimizerMode,
 }
@@ -75,7 +75,7 @@ impl Default for SuperBloomConfig {
             m: 21,
             s: 27,
             n_hashes: 8,
-            size_exponent: 35,
+            bit_vector_size_exponent: 35,
             block_size_exponent: 9,
             minimizer_mode: MinimizerMode::Simd,
         }
@@ -812,7 +812,7 @@ fn write_config<W: Write>(writer: &mut W, config: SuperBloomConfig) -> Result<()
     writer.write_all(&config.m.to_le_bytes())?;
     writer.write_all(&config.s.to_le_bytes())?;
     write_u64(writer, config.n_hashes as u64)?;
-    writer.write_all(&[config.size_exponent])?;
+    writer.write_all(&[config.bit_vector_size_exponent])?;
     writer.write_all(&[config.block_size_exponent])?;
     match config.minimizer_mode {
         MinimizerMode::Simd => {
@@ -877,7 +877,7 @@ fn read_config<R: Read>(reader: &mut R) -> Result<SuperBloomConfig, std::io::Err
         m,
         s,
         n_hashes,
-        size_exponent: size_exp[0],
+        bit_vector_size_exponent: size_exp[0],
         block_size_exponent: block_exp[0],
         minimizer_mode,
     };
@@ -924,17 +924,17 @@ fn resolve_geometry(config: SuperBloomConfig) -> Result<(usize, usize, usize), S
             "open-closed minimizer requires 1 <= t <= m".to_string(),
         ));
     }
-    if config.block_size_exponent > config.size_exponent {
+    if config.block_size_exponent > config.bit_vector_size_exponent {
         return Err(SuperBloomError::InvalidConfig(
-            "block_size_exponent cannot be greater than size_exponent".to_string(),
+            "block_size_exponent cannot be greater than bit_vector_size_exponent".to_string(),
         ));
     }
 
     let size_bits = 1usize
-        .checked_shl(config.size_exponent as u32)
+        .checked_shl(config.bit_vector_size_exponent as u32)
         .ok_or_else(|| {
             SuperBloomError::InvalidConfig(
-                "size_exponent is too large for this platform".to_string(),
+                "bit_vector_size_exponent is too large for this platform".to_string(),
             )
         })?;
     let block_size_bits = 1usize

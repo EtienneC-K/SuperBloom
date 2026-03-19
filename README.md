@@ -109,7 +109,7 @@ use superbloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1) Start from crate defaults.
-    // Defaults are: k=31, m=21, s=27, h=8, size_exponent=35 (4 GiB),
+    // Defaults are: k=31, m=21, s=27, h=8, bit_vector_size_exponent=35 (4 GiB),
     // block_size_exponent=9 (512 bits), minimizer_mode=Simd.
     let config = SuperBloomConfig::default();
 
@@ -161,7 +161,7 @@ All geometry is explicit in `SuperBloomConfig`, and threading is controlled at r
 - `m = 21`
 - `s = 27` (`k - 4`)
 - `n_hashes = 8`
-- `size_exponent = 35` (4 GiB bit-array)
+- `bit_vector_size_exponent = 35` (4 GiB bit-array)
 - `block_size_exponent = 9` (512-bit blocks)
 - `minimizer_mode = MinimizerMode::Simd`
 
@@ -191,11 +191,11 @@ Runtime defaults:
   - Too high harms speed (more hash probes and memory touches).
   - Too low is faster but generally increases false positives.
 
-- `size_exponent` (total filter bits = `2^size_exponent`, default `35`)
+- `bit_vector_size_exponent` (total filter bits = `2^bit_vector_size_exponent`, default `35`)
   - Main memory/accuracy knob.
   - Higher values use more RAM and usually lower false positives.
   - Lower values save RAM but raise false positives under the same workload.
-  - RAM bytes used by bit-array: `2^(size_exponent - 3)`.
+  - RAM bytes used by bit-array: `2^(bit_vector_size_exponent - 3)`.
   - Examples: `30` = 128 MiB, `33` = 1 GiB, `35` = 4 GiB.
 
 - `block_size_exponent` (block bits = `2^block_size_exponent`, default `9`)
@@ -242,7 +242,7 @@ Runtime defaults:
 
 - Querying full sequences benefits most (streaming locality, super-k-mer reuse).
 - Isolated random k-mer queries behave closer to blocked Bloom behavior.
-- Large `size_exponent` values (e.g., `35`) require significant RAM.
+- Large `bit_vector_size_exponent` values (e.g., `35`) require significant RAM.
 - Large number of hash function or large block size will harm perfomances
 
 

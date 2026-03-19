@@ -15,7 +15,7 @@ DEFAULT_PARAMS: dict[str, int] = {
     "m": 21,
     "s": 27,
     "n_hashes": 8,
-    "size_exponent": 35,
+    "bit_vector_size_exponent": 35,
     "block_size_exponent": 9,
     "threads": 8,
 }
@@ -67,7 +67,7 @@ def run_benchmark(index_fasta: str, query_fasta: str, params: dict[str, int]) ->
         "--n-hashes",
         str(params["n_hashes"]),
         "--size-exponent",
-        str(params["size_exponent"]),
+        str(params["bit_vector_size_exponent"]),
         "--block-size-exponent",
         str(params["block_size_exponent"]),
         "--threads",
@@ -154,8 +154,12 @@ def run_parameter_sweep_cli(
     link_s_to_k: bool = False,
 ) -> None:
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--index-fasta", required=True, help="Input FASTA/FASTQ to index")
-    parser.add_argument("--query-fasta", required=True, help="Input FASTA/FASTQ to query")
+    parser.add_argument(
+        "--index-fasta", required=True, help="Input FASTA/FASTQ to index"
+    )
+    parser.add_argument(
+        "--query-fasta", required=True, help="Input FASTA/FASTQ to query"
+    )
     parser.add_argument(
         "--values",
         default=",".join(str(x) for x in default_values),
@@ -213,7 +217,7 @@ def run_parameter_sweep_cli(
         "m",
         "s",
         "n_hashes",
-        "size_exponent",
+        "bit_vector_size_exponent",
         "block_size_exponent",
         "threads",
         "build_s",
@@ -232,4 +236,3 @@ def run_parameter_sweep_cli(
 
     print(f"\nWrote TSV:  {tsv_path}")
     print(f"Wrote plot: {png_path}")
-

@@ -34,9 +34,9 @@ struct Cli {
     #[arg(long, default_value_t = 8)]
     n_hashes: usize,
 
-    /// bit-array size exponent: total bits = 2^size_exponent
+    /// bit-array size exponent: total bits = 2^bit_vector_size_exponent
     #[arg(long, default_value_t = 35)]
-    size_exponent: u8,
+    bit_vector_size_exponent: u8,
 
     /// block size exponent: block bits = 2^block_size_exponent
     #[arg(long, default_value_t = 9)]
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         m,
         s,
         n_hashes,
-        size_exponent,
+        bit_vector_size_exponent,
         block_size_exponent,
         threads,
     } = Cli::parse();
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         m,
         s,
         n_hashes,
-        size_exponent,
+        bit_vector_size_exponent,
         block_size_exponent,
         minimizer_mode: MinimizerMode::Simd, // non-SIMD modes are experimental
     };
