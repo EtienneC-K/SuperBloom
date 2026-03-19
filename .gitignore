@@ -10,3 +10,4 @@ __pycache__/
 /benchmarks/results/*
 /benchmark/results/*
 ecoli.fa
+coverage/
