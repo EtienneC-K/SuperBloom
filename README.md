@@ -1,5 +1,7 @@
 # SuperBloom
 
+![tests](https://github.com/EtienneC-K/SuperBloom/workflows/tests/badge.svg)
+
 A Rust implementation of a Super Bloom filter for streaming DNA `k`-mer indexing and querying.
 
 
