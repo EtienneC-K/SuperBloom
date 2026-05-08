@@ -3,6 +3,7 @@ name = "superbloom"
 version = "0.1.0"
 edition = "2024"
 license-file = "LICENSE"
+description = "Fast bloom filter for k-mer indexation "
 
 [dependencies]
 ahash = "0.8.12"
