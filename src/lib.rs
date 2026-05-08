@@ -4,7 +4,7 @@
 //! `SuperBloomConfig` (no presets), then sequences/FASTA records are added with
 //! `add_sequence` / `add_fasta`.
 //!
-//! ```no_run
+//! ```
 //! use superbloom::{MinimizerMode, SuperBloom, SuperBloomConfig};
 //!
 //! let config = SuperBloomConfig {
