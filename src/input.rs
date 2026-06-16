@@ -1,10 +1,12 @@
-use needletail::FastxReader;
+use helicase::{Config, FastxParser, HelicaseParser, ParserOptions};
 use packed_seq::{PackedSeqVec, SeqVec};
 ///module to read an inputed fasta file, and maybe later a .txt file of file
 ///output will always be some compressed sequences (packed_seq) from imartayan
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
+
+pub const HELICASE_FASTX_CONFIG: Config = ParserOptions::default().config();
 
 //pub fn read_fasta(fasta_file: String) -> packed_seq::packed_seq::PackedSeqVecBase<2> {
 pub fn _read_fasta(fasta_file: String) -> PackedSeqVec {
@@ -50,7 +52,7 @@ where
 
 /// I never hated a struct more than an Iterator with lifetimes, worst invention in Mankind history
 pub struct Hell {
-    pub fxreader: Box<dyn FastxReader>,
+    pub fxreader: FastxParser<'static, HELICASE_FASTX_CONFIG>,
     pub chunk_size: usize,
 }
 
@@ -60,12 +62,11 @@ impl Iterator for Hell {
     fn next(&mut self) -> Option<Self::Item> {
         let mut chunk = Vec::new();
         for _ in 0..self.chunk_size {
-            let result = match self.fxreader.next() {
-                Some(res) => res,
+            match self.fxreader.next() {
+                Some(_) => {}
                 None => break,
-            };
-            let seq_red = result.unwrap().seq().to_mut().clone();
-            chunk.push(seq_red);
+            }
+            chunk.push(self.fxreader.get_dna_string_owned());
         }
         if chunk.is_empty() {
             None
@@ -77,8 +78,9 @@ impl Iterator for Hell {
 
 #[cfg(test)]
 mod tests {
-    use super::{_read_fasta, _read_fof, Hell};
-    use needletail::parse_fastx_file;
+    use super::{_read_fasta, _read_fof, HELICASE_FASTX_CONFIG, Hell};
+    use helicase::input::FromFile;
+    use helicase::FastxParser;
     use packed_seq::{Seq, SeqVec};
     use std::fs;
     use std::path::PathBuf;
@@ -139,7 +141,7 @@ mod tests {
         let path = temp_path("reads.fasta");
         fs::write(&path, b">r1\nAAAA\n>r2\nCCCC\n>r3\nGGGG\n").unwrap();
 
-        let reader = parse_fastx_file(&path).unwrap();
+        let reader = FastxParser::<HELICASE_FASTX_CONFIG>::from_file(&path).unwrap();
         let mut hell = Hell {
             fxreader: reader,
             chunk_size: 2,
@@ -197,7 +199,7 @@ mod tests {
         let path = temp_path("chunk1.fasta");
         fs::write(&path, b">r1\nAAAA\n>r2\nCCCC\n").unwrap();
 
-        let reader = parse_fastx_file(&path).unwrap();
+        let reader = FastxParser::<HELICASE_FASTX_CONFIG>::from_file(&path).unwrap();
         let mut hell = Hell {
             fxreader: reader,
             chunk_size: 1,
@@ -211,11 +213,11 @@ mod tests {
     }
 
     #[test]
-    fn parse_fastx_file_rejects_empty_input() {
+    fn helicase_parser_rejects_empty_input() {
         let path = temp_path("empty_reads.fasta");
         fs::write(&path, b"").unwrap();
 
-        assert!(parse_fastx_file(&path).is_err());
+        assert!(FastxParser::<HELICASE_FASTX_CONFIG>::from_file(&path).is_err());
 
         fs::remove_file(path).unwrap();
     }

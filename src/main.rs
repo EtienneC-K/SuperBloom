@@ -1,14 +1,16 @@
-use needletail::parse_fastx_file;
+use helicase::input::FromFile;
+use helicase::{Config, FastxParser, HelicaseParser, ParserOptions};
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
 use superbloom::{SuperBloom, SuperBloomConfig};
 
+const HELICASE_FASTX_CONFIG: Config = ParserOptions::default().config();
+
 fn first_query_of_len(path: &str, query_len: usize) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut reader = parse_fastx_file(path)?;
-    while let Some(record_result) = reader.next() {
-        let record = record_result?;
-        let seq = record.seq().as_ref().to_vec();
+    let mut parser = FastxParser::<HELICASE_FASTX_CONFIG>::from_file(path)?;
+    while parser.next().is_some() {
+        let seq = parser.get_dna_string();
         if seq.len() >= query_len {
             return Ok(seq[..query_len].to_vec());
         }

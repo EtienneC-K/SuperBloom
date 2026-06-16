@@ -33,9 +33,10 @@ pub mod utils;
 
 use bloom::{BloomFilter, FrozenBloomFilter};
 use decyclers::Decycler;
+use helicase::input::FromFile;
+use helicase::{Config, FastxParser, HelicaseParser, ParserOptions};
 pub use minimizers::MinimizerMode;
 use minimizers::selected_mins_x_pos;
-use needletail::{FastxReader, parse_fastx_file};
 use packed_seq::{PackedSeq, PackedSeqVec, Seq, SeqVec};
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -50,6 +51,7 @@ const SHARD_COUNT: usize = 1024;
 const SUPERBLOOM_MAGIC: &[u8; 8] = b"SBLOOM01";
 const PAR_BATCH_RECORDS: usize = 256;
 const DEFAULT_THREADS: usize = 8;
+const HELICASE_FASTX_CONFIG: Config = ParserOptions::default().config();
 static EXPERIMENTAL_MINIMIZER_WARNING_ONCE: Once = Once::new();
 
 /// Full manual configuration for building a SuperBloom index.
@@ -296,17 +298,13 @@ impl SuperBloom {
         let mut report = AddReport::default();
         let path_ref = path.as_ref();
         let path_string = path_ref.display().to_string();
-        let mut reader = open_fastx_reader(path_ref, &path_string)?;
+        let mut parser = open_fastx_parser(path_ref, &path_string)?;
         let mut batch: Vec<Vec<u8>> = Vec::with_capacity(PAR_BATCH_RECORDS);
         self.ensure_mutable();
 
-        while let Some(record_result) = reader.next() {
-            let record = record_result.map_err(|err| SuperBloomError::FastaRead {
-                path: path_string.clone(),
-                message: err.to_string(),
-            })?;
+        while parser.next().is_some() {
             report.records_processed = report.records_processed.saturating_add(1);
-            batch.push(record.seq().as_ref().to_vec());
+            batch.push(parser.get_dna_string_owned());
 
             if batch.len() >= PAR_BATCH_RECORDS {
                 let (records_indexed, kmers_added) = self.index_batch(&batch)?;
@@ -636,13 +634,15 @@ impl FrozenSuperBloom {
     }
 }
 
-fn open_fastx_reader(
+fn open_fastx_parser(
     path: &Path,
     path_string: &str,
-) -> Result<Box<dyn FastxReader>, SuperBloomError> {
-    parse_fastx_file(path).map_err(|err| SuperBloomError::FastaOpen {
-        path: path_string.to_string(),
-        message: err.to_string(),
+) -> Result<FastxParser<'static, HELICASE_FASTX_CONFIG>, SuperBloomError> {
+    FastxParser::<HELICASE_FASTX_CONFIG>::from_file(path).map_err(|err| {
+        SuperBloomError::FastaOpen {
+            path: path_string.to_string(),
+            message: err.to_string(),
+        }
     })
 }
 
@@ -688,15 +688,11 @@ fn run_query_fasta<P: AsRef<Path>>(
     let mut report = QueryReport::default();
     let path_ref = path.as_ref();
     let path_string = path_ref.display().to_string();
-    let mut reader = open_fastx_reader(path_ref, &path_string)?;
+    let mut parser = open_fastx_parser(path_ref, &path_string)?;
     let mut batch: Vec<Vec<u8>> = Vec::with_capacity(PAR_BATCH_RECORDS);
 
-    while let Some(record_result) = reader.next() {
-        let record = record_result.map_err(|err| SuperBloomError::FastaRead {
-            path: path_string.clone(),
-            message: err.to_string(),
-        })?;
-        batch.push(record.seq().as_ref().to_vec());
+    while parser.next().is_some() {
+        batch.push(parser.get_dna_string_owned());
         if batch.len() >= PAR_BATCH_RECORDS {
             let (records_processed, queried_kmers, positive_kmers) =
                 query_batch_stats(bloom, decycler, config, &batch, thread_pool);
@@ -1076,4 +1072,55 @@ fn insert_super_kmer_u128(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod public_api_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_path(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("superbloom_{name}_{unique}_{}", std::process::id()));
+        path
+    }
+
+    fn tiny_config() -> SuperBloomConfig {
+        SuperBloomConfig {
+            k: 3,
+            m: 1,
+            s: 2,
+            n_hashes: 1,
+            bit_vector_size_exponent: 12,
+            block_size_exponent: 2,
+            minimizer_mode: MinimizerMode::Simd,
+        }
+    }
+
+    #[test]
+    fn add_and_query_fasta_read_records_from_file() {
+        let path = temp_path("reads.fasta");
+        fs::write(&path, b">r1\nACGTACGT\n>r2\nTTT\n").unwrap();
+
+        let mut bloom = SuperBloom::new(tiny_config()).unwrap();
+        let add_report = bloom.add_fasta(&path).unwrap();
+
+        assert_eq!(add_report.records_processed, 2);
+        assert_eq!(add_report.records_indexed, 2);
+        assert_eq!(add_report.kmers_added, 7);
+
+        let query_report = bloom.query_fasta(&path).unwrap();
+
+        assert_eq!(query_report.records_processed, 2);
+        assert_eq!(query_report.queried_kmers, 7);
+        assert_eq!(query_report.positive_kmers, 7);
+
+        fs::remove_file(path).unwrap();
+    }
 }

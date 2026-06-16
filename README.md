@@ -124,7 +124,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("added {added} k-mers from memory");
 
     // 5) Insert compressed FASTA/FASTQ from disk.
-    // needletail auto-detects compression (gz/bz2/xz/zst) and format (FASTA/FASTQ).
+    // Helicase auto-detects compression (gz/bz2/xz/zst) and format (FASTA/FASTQ).
     let add_report = sb.add_fasta("data/ecoli.fa.zst")?;
     println!("indexed {} records", add_report.records_indexed);
 
@@ -229,7 +229,7 @@ Runtime defaults:
    FASTA insertion is batched and parallelized with Rayon (`PAR_BATCH_RECORDS`)
 
 5. **Compressed FASTA/FASTQ support**  
-   Input readers use `needletail::parse_fastx_file`, which supports compressed files (`.gz`, `.bz2`, `.xz`, `.zst`) and auto-detects FASTA/FASTQ.
+   Input readers use `helicase::FastxParser`, which supports compressed files (`.gz`, `.bz2`, `.xz`, `.zst`) and auto-detects FASTA/FASTQ.
 
 ## Serialization
 
