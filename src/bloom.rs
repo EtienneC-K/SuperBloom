@@ -18,7 +18,7 @@ use std::io::{self, Read, Write};
 use std::sync::Mutex;
 #[cfg(test)]
 use utils::sum_vec_bool;
-use utils::{hash_u128_to_u64, roll_u128_kmer, xorshift_u64};
+use utils::{hash_u128_to_u64, roll_u64_kmer, roll_u128_kmer, xorshift_u64};
 
 const SHARD_COUNT: usize = 1024;
 
@@ -756,15 +756,23 @@ impl FrozenBloomFilter {
             let subblocknum: usize = ((hashed_minimizer as usize) >> 10) & address_mask;
             let block = &self.filter[blocknum];
 
-            for j in start_pos..end_pos {
-                let kmer: PackedSeq = sequence.slice(j..j + k as usize);
-                let present: bool = self.check_kmer(block, subblocknum, kmer, s);
-                presence_vec.push(present);
-            }
+            check_super_kmer_u64(
+                block,
+                subblocknum,
+                &sequence,
+                start_pos,
+                end_pos,
+                k,
+                s,
+                self.n_hashes,
+                self.block_size_mask,
+                &mut presence_vec,
+            );
         }
         presence_vec
     }
 
+    #[allow(dead_code)]
     fn check_kmer(&self, block: &BlockShard, subblock: usize, kmer: PackedSeq, s: u16) -> bool {
         for i in 0..kmer.len() - s as usize + 1 {
             let smer = kmer.slice(i..i + s as usize);
@@ -839,6 +847,93 @@ fn read_usize<R: Read>(reader: &mut R) -> io::Result<usize> {
     reader.read_exact(&mut bytes)?;
     usize::try_from(u64::from_le_bytes(bytes))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "u64 does not fit in usize"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_super_kmer_u64(
+    block: &BlockShard,
+    subblock: usize,
+    sequence: &PackedSeqVec,
+    start_pos: usize,
+    end_pos: usize,
+    k: u16,
+    s: u16,
+    n_hashes: usize,
+    block_size_mask: usize,
+    presence_vec: &mut Vec<bool>,
+) {
+    let window_size = (k - s + 1) as usize;
+    let smer_count = end_pos + window_size - 1 - start_pos;
+    let mut current_smer = sequence.slice(start_pos..start_pos + s as usize).as_u64();
+    let mut missing_in_window = 0usize;
+
+    if window_size <= u64::BITS as usize {
+        let mut missing_slots = 0u64;
+
+        for offset in 0..smer_count {
+            let slot_mask = 1u64 << (offset % window_size);
+            if offset >= window_size && missing_slots & slot_mask != 0 {
+                missing_in_window -= 1;
+            }
+
+            let smer_present =
+                check_smer_hash_u64(block, subblock, current_smer, n_hashes, block_size_mask);
+            if smer_present {
+                missing_slots &= !slot_mask;
+            } else {
+                missing_slots |= slot_mask;
+                missing_in_window += 1;
+            }
+            if offset + 1 >= window_size {
+                presence_vec.push(missing_in_window == 0);
+            }
+            if offset + 1 < smer_count {
+                let next_base = sequence.as_slice().get(start_pos + offset + s as usize);
+                current_smer = roll_u64_kmer(current_smer, next_base, s);
+            }
+        }
+    } else {
+        let mut rolling_presence = vec![true; window_size];
+
+        for offset in 0..smer_count {
+            if offset >= window_size && !rolling_presence[offset % window_size] {
+                missing_in_window -= 1;
+            }
+
+            let smer_present =
+                check_smer_hash_u64(block, subblock, current_smer, n_hashes, block_size_mask);
+            rolling_presence[offset % window_size] = smer_present;
+            if !smer_present {
+                missing_in_window += 1;
+            }
+            if offset + 1 >= window_size {
+                presence_vec.push(missing_in_window == 0);
+            }
+            if offset + 1 < smer_count {
+                let next_base = sequence.as_slice().get(start_pos + offset + s as usize);
+                current_smer = roll_u64_kmer(current_smer, next_base, s);
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn check_smer_hash_u64(
+    block: &BlockShard,
+    subblock: usize,
+    packed_smer: u64,
+    n_hashes: usize,
+    block_size_mask: usize,
+) -> bool {
+    let mut hash = xorshift_u64(packed_smer);
+    for _ in 0..n_hashes {
+        let address = hash as usize & block_size_mask;
+        if !block.get(subblock, address) {
+            return false;
+        }
+        hash = xorshift_u64(hash);
+    }
+    true
 }
 
 fn check_super_kmer_u128(
@@ -1001,6 +1096,73 @@ mod tests {
 
         assert_eq!(results.len(), 4);
         assert!(results.iter().all(|present| *present));
+    }
+
+    #[test]
+    fn frozen_u64_query_matches_mutable_reference() {
+        let bloom = BloomFilter::new(1 << 20, 3, 8, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let inserted_sequence = PackedSeqVec::from_ascii(b"ACGTACGTACGTACGT");
+        let query_sequence = b"ACGTACGTAAAAACGT";
+
+        insert_sequence_with_decycler(&bloom, &inserted_sequence, 8, 3, 5, &decycler);
+        let expected = bloom.check_sequence(
+            PackedSeqVec::from_ascii(query_sequence),
+            8,
+            3,
+            5,
+            &decycler,
+            MinimizerMode::Decycling,
+        );
+
+        let frozen = bloom.into_frozen();
+        let observed = frozen.check_sequence(
+            PackedSeqVec::from_ascii(query_sequence),
+            8,
+            3,
+            5,
+            &decycler,
+            MinimizerMode::Decycling,
+        );
+
+        assert_eq!(observed, expected);
+        assert_eq!(observed.len(), query_sequence.len() - 8 + 1);
+    }
+
+    #[test]
+    fn frozen_u64_large_window_query_matches_mutable_reference() {
+        let bloom = BloomFilter::new(1 << 20, 3, 80, 1 << 10, 1 << 10);
+        let mut decycler = Decycler::new(3);
+        decycler.compute_blocks();
+        let inserted_sequence = PackedSeqVec::from_ascii(
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT",
+        );
+        let query_sequence =
+            b"ACGTACGTACGTACGTACGTACGTACGTACGTACGTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT";
+
+        insert_sequence_with_decycler(&bloom, &inserted_sequence, 80, 3, 5, &decycler);
+        let expected = bloom.check_sequence(
+            PackedSeqVec::from_ascii(query_sequence),
+            80,
+            3,
+            5,
+            &decycler,
+            MinimizerMode::Decycling,
+        );
+
+        let frozen = bloom.into_frozen();
+        let observed = frozen.check_sequence(
+            PackedSeqVec::from_ascii(query_sequence),
+            80,
+            3,
+            5,
+            &decycler,
+            MinimizerMode::Decycling,
+        );
+
+        assert_eq!(observed, expected);
+        assert_eq!(observed.len(), query_sequence.len() - 80 + 1);
     }
 
     #[test]

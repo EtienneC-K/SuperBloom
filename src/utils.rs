@@ -33,6 +33,11 @@ pub fn roll_u128_kmer(window: u128, next_base: u8, len: u16) -> u128 {
     (window >> 2) | ((next_base as u128) << (2 * (len as usize - 1)))
 }
 
+#[inline(always)]
+pub fn roll_u64_kmer(window: u64, next_base: u8, len: u16) -> u64 {
+    (window >> 2) | ((next_base as u64) << (2 * (len as usize - 1)))
+}
+
 pub fn _xorshift_u32(mut x: u32) -> u32 {
     x ^= x << 13;
     x ^= x >> 17;
@@ -62,8 +67,8 @@ pub fn sum_vec_bool(boolean_vector: &Vec<bool>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        _xorshift_u32, fold_u128_to_u64, hash_u128_to_u64, roll_u128_kmer, sum_vec_bool,
-        xorshift_u64, xorshift_u128,
+        _xorshift_u32, fold_u128_to_u64, hash_u128_to_u64, roll_u64_kmer, roll_u128_kmer,
+        sum_vec_bool, xorshift_u64, xorshift_u128,
     };
     use packed_seq::{Seq, SeqVec};
 
@@ -117,6 +122,18 @@ mod tests {
         let expected = packed_seq::PackedSeqVec::from_ascii(b"CGTA")
             .as_slice()
             .as_u128();
+        assert_eq!(rolled, expected);
+    }
+
+    #[test]
+    fn roll_u64_kmer_drops_first_base_and_appends_new_one() {
+        let start = packed_seq::PackedSeqVec::from_ascii(b"ACGT")
+            .as_slice()
+            .as_u64();
+        let rolled = roll_u64_kmer(start, 0, 4);
+        let expected = packed_seq::PackedSeqVec::from_ascii(b"CGTA")
+            .as_slice()
+            .as_u64();
         assert_eq!(rolled, expected);
     }
 
