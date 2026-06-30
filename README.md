@@ -251,4 +251,23 @@ Runtime defaults:
 
 ## Citation
 
-To be done
+If you use SuperBloom, please cite:
+
+Etienne Conchon-Kerjan, Timothe Rouze, Lucas Robidou, Florian Ingels, and Antoine Limasset.
+**Super Bloom: Fast and precise filter for streaming k-mer queries**.
+bioRxiv, 2026. doi: [10.64898/2026.03.17.712354](https://doi.org/10.64898/2026.03.17.712354).
+Preprint: <https://www.biorxiv.org/content/10.64898/2026.03.17.712354v1>.
+
+This work was presented at [RECOMB-Seq 2026](https://recomb-seq.github.io/seq2026/program.html) in the
+Session 1 proceedings program on indexing and pangenome data structures.
+
+```bibtex
+@article{conchonkerjan2026superbloom,
+  title = {Super Bloom: Fast and precise filter for streaming k-mer queries},
+  author = {Conchon-Kerjan, Etienne and Rouze, Timothe and Robidou, Lucas and Ingels, Florian and Limasset, Antoine},
+  journal = {bioRxiv},
+  year = {2026},
+  doi = {10.64898/2026.03.17.712354},
+  url = {https://www.biorxiv.org/content/10.64898/2026.03.17.712354v1}
+}
+```
